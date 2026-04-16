@@ -27,7 +27,7 @@ async function login(email, password) {
 
 beforeEach(() => {
   db = createDatabase(":memory:");
-  ({ app } = createApp({ db }));
+  ({ app } = createApp({ db, bootstrapDemoUsers: false }));
 });
 
 describe("auth", () => {

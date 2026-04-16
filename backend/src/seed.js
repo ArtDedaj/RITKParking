@@ -1,20 +1,9 @@
+import { fileURLToPath } from "url";
 import { createDatabase } from "./db.js";
 import { hashPassword } from "./utils/password.js";
 
-const db = createDatabase();
-
-function resetTables() {
-  db.exec(`
-    DELETE FROM audit_logs;
-    DELETE FROM recurring_reservations;
-    DELETE FROM reservations;
-    DELETE FROM parking_spots;
-    DELETE FROM users;
-  `);
-}
-
-function seedUsers() {
-  const insert = db.prepare(`
+export function ensureDemoUsers(targetDb) {
+  const insert = targetDb.prepare(`
     INSERT INTO users (name, email, password_hash, role, status)
     VALUES (?, ?, ?, ?, 'active')
   `);
@@ -27,12 +16,29 @@ function seedUsers() {
     ["Student Two", "student2@auk.org", "Student123!", "student"],
     ["Student Three", "student3@auk.org", "Student123!", "student"]
   ].forEach(([name, email, password, role]) => {
-    insert.run(name, email, hashPassword(password), role);
+    const existingUser = targetDb.prepare("SELECT id FROM users WHERE email = ?").get(email);
+    if (!existingUser) {
+      insert.run(name, email, hashPassword(password), role);
+    }
   });
 }
 
-function seedSpots() {
-  const insert = db.prepare(`
+function resetTables(targetDb) {
+  targetDb.exec(`
+    DELETE FROM audit_logs;
+    DELETE FROM recurring_reservations;
+    DELETE FROM reservations;
+    DELETE FROM parking_spots;
+    DELETE FROM users;
+  `);
+}
+
+function seedUsers(targetDb) {
+  ensureDemoUsers(targetDb);
+}
+
+function seedSpots(targetDb) {
+  const insert = targetDb.prepare(`
     INSERT INTO parking_spots (code, side, type, is_available, notes)
     VALUES (?, ?, ?, ?, ?)
   `);
@@ -49,12 +55,12 @@ function seedSpots() {
   insert.run("E-02", "entrance", "vip", 0, "Temporarily unavailable for maintenance.");
 }
 
-function seedReservations() {
-  const insertReservation = db.prepare(`
+function seedReservations(targetDb) {
+  const insertReservation = targetDb.prepare(`
     INSERT INTO reservations (user_id, spot_id, start_time, end_time, status, approved_by, approval_note)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
-  const insertRecurring = db.prepare(`
+  const insertRecurring = targetDb.prepare(`
     INSERT INTO recurring_reservations (user_id, spot_id, day_of_week, start_time, end_time, semester_start, semester_end, recurrence_type, status)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
@@ -68,9 +74,16 @@ function seedReservations() {
   insertRecurring.run(3, 38, 3, "2026-04-22T08:00:00.000Z", "2026-04-22T14:00:00.000Z", "2026-04-20", "2026-08-31", "weekly", "active");
 }
 
-resetTables();
-seedUsers();
-seedSpots();
-seedReservations();
+export function runSeed(targetDb = createDatabase()) {
+  resetTables(targetDb);
+  seedUsers(targetDb);
+  seedSpots(targetDb);
+  seedReservations(targetDb);
+  console.log("Database seeded with demo users, 40 parking spots, and sample reservations.");
+}
 
-console.log("Database seeded with demo users, 40 parking spots, and sample reservations.");
+const currentFilePath = fileURLToPath(import.meta.url);
+
+if (process.argv[1] === currentFilePath) {
+  runSeed();
+}

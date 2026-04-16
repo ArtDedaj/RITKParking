@@ -8,9 +8,13 @@ import spotRoutes from "./routes/spotRoutes.js";
 import reservationRoutes from "./routes/reservationRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+import { ensureDemoUsers } from "./seed.js";
 
 export function createApp(options = {}) {
   const db = options.db || createDatabase(options.dbPath);
+  if (options.bootstrapDemoUsers !== false) {
+    ensureDemoUsers(db);
+  }
   const app = express();
 
   app.use(cors({ origin: config.frontendUrl, credentials: true }));
