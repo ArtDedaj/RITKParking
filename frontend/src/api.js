@@ -24,10 +24,13 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  me: () => request("/auth/me"),
   login: (payload) => request("/auth/login", { method: "POST", body: JSON.stringify(payload) }),
   register: (payload) => request("/auth/register", { method: "POST", body: JSON.stringify(payload) }),
   verifyEmail: (payload) => request("/auth/verify-email", { method: "POST", body: JSON.stringify(payload) }),
   resendVerification: (payload) => request("/auth/resend-verification", { method: "POST", body: JSON.stringify(payload) }),
+  forgotPassword: (payload) => request("/auth/forgot-password", { method: "POST", body: JSON.stringify(payload) }),
+  resetPassword: (payload) => request("/auth/reset-password", { method: "POST", body: JSON.stringify(payload) }),
   meReservations: () => request("/reservations"),
   recurringReservations: () => request("/reservations/recurring/list"),
   createReservation: (payload) => request("/reservations", { method: "POST", body: JSON.stringify(payload) }),

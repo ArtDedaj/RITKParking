@@ -56,7 +56,7 @@ describe("auth", () => {
     expect(response.status).toBe(400);
   });
 
-  it("blocks login until the email is verified", async () => {
+  it("allows login before email verification but marks the account unverified", async () => {
     await request(app).post("/auth/register").send({
       name: "Student Test",
       email: "student@auk.org",
@@ -68,8 +68,8 @@ describe("auth", () => {
       password: "Student123!"
     });
 
-    expect(response.status).toBe(403);
-    expect(response.body.code).toBe("EMAIL_NOT_VERIFIED");
+    expect(response.status).toBe(200);
+    expect(response.body.user.is_verified).toBe(false);
   });
 
   it("verifies the email token and then allows login", async () => {
@@ -114,6 +114,41 @@ describe("auth", () => {
 
     expect(response.status).toBe(200);
     expect(response.body.message).toContain("sent");
+  });
+
+  it("sends a forgot password response and resets the password from a reset token", async () => {
+    createUser("Student", "student@auk.org", "student");
+
+    const forgotResponse = await request(app).post("/auth/forgot-password").send({
+      email: "student@auk.org"
+    });
+
+    expect(forgotResponse.status).toBe(200);
+    expect(forgotResponse.body.message).toContain("reset link");
+
+    const token = "known-reset-token";
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    db.prepare(`
+      UPDATE users
+      SET password_reset_token_hash = ?,
+          password_reset_expires_at = '2026-05-01T12:00:00.000Z'
+      WHERE email = 'student@auk.org'
+    `).run(tokenHash);
+
+    const resetResponse = await request(app).post("/auth/reset-password").send({
+      token,
+      password: "NewPassword123!"
+    });
+
+    expect(resetResponse.status).toBe(200);
+    expect(resetResponse.body.token).toBeTruthy();
+
+    const loginResponse = await request(app).post("/auth/login").send({
+      email: "student@auk.org",
+      password: "NewPassword123!"
+    });
+
+    expect(loginResponse.status).toBe(200);
   });
 
   it("keeps only student1 as the demo student account", async () => {
@@ -235,8 +270,9 @@ describe("reservation rules", () => {
   });
 
   it("lets students reserve freely from the general lot by default", async () => {
-    createUser("Student", "student@auk.org", "student");
+    const studentId = createUser("Student", "student@auk.org", "student");
     createSpot("L-01", "left", "general");
+    db.prepare("UPDATE users SET is_verified = 1 WHERE id = ?").run(studentId);
     const token = await login("student@auk.org", "Password123!");
 
     const response = await request(app)
@@ -244,10 +280,10 @@ describe("reservation rules", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({
         lotType: "general",
-        startClock: "08:00",
-        endClock: "10:00",
-        startTime: "2026-04-28T08:00:00.000Z",
-        endTime: "2026-04-28T10:00:00.000Z"
+        startClock: "07:30",
+        endClock: "09:00",
+        startTime: "2026-04-28T07:30:00.000Z",
+        endTime: "2026-04-28T09:00:00.000Z"
       });
 
     expect(response.status).toBe(201);
@@ -277,7 +313,7 @@ describe("reservation rules", () => {
   it("uses a user-specific approval override when set", async () => {
     createUser("Student", "student@auk.org", "student");
     const spotId = createSpot("L-01", "left", "general");
-    db.prepare("UPDATE users SET approval_mode_override = 'approved' WHERE email = 'student@auk.org'").run();
+    db.prepare("UPDATE users SET approval_mode_override = 'approved', is_verified = 1 WHERE email = 'student@auk.org'").run();
     const token = await login("student@auk.org", "Password123!");
 
     const response = await request(app)
@@ -285,19 +321,20 @@ describe("reservation rules", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({
         spotId,
-        startClock: "08:00",
-        endClock: "10:00",
-        startTime: "2026-04-26T08:00:00.000Z",
-        endTime: "2026-04-26T10:00:00.000Z"
+        startClock: "07:30",
+        endClock: "09:00",
+        startTime: "2026-04-26T07:30:00.000Z",
+        endTime: "2026-04-26T09:00:00.000Z"
       });
 
     expect(response.status).toBe(201);
     expect(response.body.status).toBe("approved");
   });
 
-  it("limits student reservations to whole hours between 08:00 and 20:00", async () => {
-    createUser("Student", "student@auk.org", "student");
+  it("blocks reservations for users who have not verified their email", async () => {
+    const studentId = createUser("Student", "student@auk.org", "student");
     const spotId = createSpot("L-01", "left", "general");
+    db.prepare("UPDATE users SET is_verified = 0 WHERE id = ?").run(studentId);
     const token = await login("student@auk.org", "Password123!");
 
     const response = await request(app)
@@ -305,10 +342,30 @@ describe("reservation rules", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({
         spotId,
-        startClock: "07:00",
+        startClock: "07:30",
         endClock: "09:00",
-        startTime: "2026-04-26T07:00:00.000Z",
+        startTime: "2026-04-26T07:30:00.000Z",
         endTime: "2026-04-26T09:00:00.000Z"
+      });
+
+    expect(response.status).toBe(403);
+  });
+
+  it("limits student reservations to the 07:30 to 20:00 window with 90 minute minimums", async () => {
+    const studentId = createUser("Student", "student@auk.org", "student");
+    const spotId = createSpot("L-01", "left", "general");
+    db.prepare("UPDATE users SET is_verified = 1 WHERE id = ?").run(studentId);
+    const token = await login("student@auk.org", "Password123!");
+
+    const response = await request(app)
+      .post("/reservations")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        spotId,
+        startClock: "07:30",
+        endClock: "08:30",
+        startTime: "2026-04-26T07:30:00.000Z",
+        endTime: "2026-04-26T08:30:00.000Z"
       });
 
     expect(response.status).toBe(400);

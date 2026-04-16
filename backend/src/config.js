@@ -14,5 +14,6 @@ export const config = {
   smtpUser: process.env.SMTP_USER || "",
   smtpPass: process.env.SMTP_PASS || "",
   smtpFrom: process.env.SMTP_FROM || "AUK Smart Parking <no-reply@auk.org>",
-  verificationTtlHours: Number(process.env.EMAIL_VERIFICATION_TTL_HOURS || 24)
+  verificationTtlHours: Number(process.env.EMAIL_VERIFICATION_TTL_HOURS || 24),
+  passwordResetTtlHours: Number(process.env.PASSWORD_RESET_TTL_HOURS || 2)
 };

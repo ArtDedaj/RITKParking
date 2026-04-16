@@ -10,6 +10,14 @@ function getSettings(db) {
   return db.prepare("SELECT * FROM app_settings WHERE id = 1").get();
 }
 
+function getUserRecord(db, userId) {
+  return db.prepare(`
+    SELECT id, role, is_verified, approval_mode_override
+    FROM users
+    WHERE id = ?
+  `).get(userId);
+}
+
 function countActiveReservations(db, userId) {
   return db.prepare(`
     SELECT COUNT(*) AS count
@@ -118,6 +126,7 @@ function createAuditLog(db, actorUserId, action, entityType, entityId, details =
 export function createReservation(db, actor, payload) {
   const { spotId, startTime, endTime, lotType, startClock, endClock } = payload;
   const settings = getSettings(db);
+  const userRecord = getUserRecord(db, actor.id);
   const spot = spotId ? getSpot(db, spotId) : findAvailableSpot(db, actor, lotType || "general", startTime, endTime);
 
   if (!spot) {
@@ -142,6 +151,16 @@ export function createReservation(db, actor, payload) {
 
   const durationHours =
     (new Date(endTime).getTime() - new Date(startTime).getTime()) / (1000 * 60 * 60);
+  const durationMinutes =
+    (new Date(endTime).getTime() - new Date(startTime).getTime()) / (1000 * 60);
+
+  if (actor.role !== "security" && !userRecord?.is_verified) {
+    throw httpError(403, "Verify your email before reserving a parking spot.");
+  }
+
+  if (actor.role !== "security" && durationMinutes < 90) {
+    throw httpError(400, "Reservations must be at least 90 minutes.");
+  }
 
   if (actor.role === "student") {
     const startMinutes = parseClockToMinutes(startClock);
@@ -151,12 +170,12 @@ export function createReservation(db, actor, payload) {
       throw httpError(400, "Students must choose valid start and end times.");
     }
 
-    if (startMinutes < 8 * 60 || endMinutes > 20 * 60 || startMinutes >= endMinutes) {
-      throw httpError(400, "Students can only reserve between 08:00 and 20:00.");
+    if (startMinutes < 7 * 60 + 30 || endMinutes > 20 * 60 || startMinutes >= endMinutes) {
+      throw httpError(400, "Students can only reserve between 07:30 and 20:00.");
     }
 
-    if (startMinutes % 60 !== 0 || endMinutes % 60 !== 0) {
-      throw httpError(400, "Student reservations must use whole-hour time slots.");
+    if (startMinutes % 30 !== 0 || endMinutes % 30 !== 0) {
+      throw httpError(400, "Student reservations must use 30-minute time slots.");
     }
   }
 
@@ -199,6 +218,7 @@ export function createRecurringReservation(db, actor, payload) {
   }
 
   const { spotId, lotType = "general", dayOfWeek, startTime, endTime, semesterStart, semesterEnd, recurrenceType = "weekly" } = payload;
+  const userRecord = getUserRecord(db, actor.id);
   const spot = spotId ? getSpot(db, spotId) : findAvailableSpot(db, actor, lotType, startTime, endTime);
 
   if (!spot) {
@@ -215,6 +235,17 @@ export function createRecurringReservation(db, actor, payload) {
 
   if (!isFutureRange(startTime, endTime)) {
     throw httpError(400, "Recurring reservation end time must be after start time.");
+  }
+
+  const durationMinutes =
+    (new Date(endTime).getTime() - new Date(startTime).getTime()) / (1000 * 60);
+
+  if (actor.role !== "security" && !userRecord?.is_verified) {
+    throw httpError(403, "Verify your email before creating recurring reservations.");
+  }
+
+  if (actor.role !== "security" && durationMinutes < 90) {
+    throw httpError(400, "Recurring reservations must be at least 90 minutes.");
   }
 
   if (new Date(semesterStart).getTime() >= new Date(semesterEnd).getTime()) {

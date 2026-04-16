@@ -3,6 +3,8 @@ import jwt from "jsonwebtoken";
 import { comparePassword, hashPassword } from "../utils/password.js";
 import { config } from "../config.js";
 import { issueVerificationEmail, verifyEmailToken } from "../services/emailVerificationService.js";
+import { authenticate } from "../middleware/auth.js";
+import { clearPasswordResetToken, consumePasswordResetToken, issuePasswordResetEmail } from "../services/passwordResetService.js";
 
 const router = express.Router();
 
@@ -56,14 +58,6 @@ router.post("/login", (req, res, next) => {
       return res.status(401).json({ message: "Invalid email or password." });
     }
 
-    if (!user.is_verified) {
-      return res.status(403).json({
-        code: "EMAIL_NOT_VERIFIED",
-        message: "Please verify your @auk.org email before signing in.",
-        email: user.email
-      });
-    }
-
     const safeUser = {
       id: user.id,
       name: user.name,
@@ -77,6 +71,16 @@ router.post("/login", (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+router.get("/me", authenticate, (req, res) => {
+  const user = req.db.prepare(`
+    SELECT id, name, email, role, status, is_verified
+    FROM users
+    WHERE id = ?
+  `).get(req.user.id);
+
+  res.json(user);
 });
 
 router.post("/verify-email", (req, res, next) => {
@@ -125,6 +129,66 @@ router.post("/resend-verification", (req, res, next) => {
   })().catch((error) => {
     next(error);
   });
+});
+
+router.post("/forgot-password", (req, res, next) => {
+  (async () => {
+    const normalizedEmail = String(req.body?.email || "").trim().toLowerCase();
+    if (!normalizedEmail) {
+      return res.status(400).json({ message: "Email is required." });
+    }
+
+    const user = req.db.prepare(`
+      SELECT id, name, email
+      FROM users
+      WHERE email = ?
+    `).get(normalizedEmail);
+
+    if (user) {
+      await issuePasswordResetEmail(req.db, user);
+    }
+
+    res.json({ message: "If an account exists for that email, a reset link has been sent." });
+  })().catch((error) => {
+    next(error);
+  });
+});
+
+router.post("/reset-password", (req, res, next) => {
+  try {
+    const token = String(req.body?.token || "").trim();
+    const password = String(req.body?.password || "");
+
+    if (!token || !password) {
+      return res.status(400).json({ message: "Reset token and new password are required." });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({ message: "Password must be at least 8 characters long." });
+    }
+
+    const user = consumePasswordResetToken(req.db, token);
+    req.db.prepare(`
+      UPDATE users
+      SET password_hash = ?
+      WHERE id = ?
+    `).run(hashPassword(password), user.id);
+    clearPasswordResetToken(req.db, user.id);
+
+    const safeUser = req.db.prepare(`
+      SELECT id, name, email, role, status, is_verified
+      FROM users
+      WHERE id = ?
+    `).get(user.id);
+
+    res.json({
+      message: "Password updated successfully.",
+      token: issueToken(safeUser),
+      user: safeUser
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 router.post("/google", (req, res) => {

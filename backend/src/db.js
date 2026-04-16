@@ -30,6 +30,8 @@ export function createDatabase(dbPath = config.dbPath) {
       is_verified INTEGER NOT NULL DEFAULT 1,
       verification_token_hash TEXT DEFAULT NULL,
       verification_expires_at TEXT DEFAULT NULL,
+      password_reset_token_hash TEXT DEFAULT NULL,
+      password_reset_expires_at TEXT DEFAULT NULL,
       verified_at TEXT DEFAULT CURRENT_TIMESTAMP,
       approval_mode_override TEXT DEFAULT NULL,
       status TEXT NOT NULL DEFAULT 'active',
@@ -104,6 +106,8 @@ export function createDatabase(dbPath = config.dbPath) {
   ensureColumn(db, "users", "is_verified", "is_verified INTEGER NOT NULL DEFAULT 1");
   ensureColumn(db, "users", "verification_token_hash", "verification_token_hash TEXT DEFAULT NULL");
   ensureColumn(db, "users", "verification_expires_at", "verification_expires_at TEXT DEFAULT NULL");
+  ensureColumn(db, "users", "password_reset_token_hash", "password_reset_token_hash TEXT DEFAULT NULL");
+  ensureColumn(db, "users", "password_reset_expires_at", "password_reset_expires_at TEXT DEFAULT NULL");
   ensureColumn(db, "users", "verified_at", "verified_at TEXT DEFAULT CURRENT_TIMESTAMP");
   ensureColumn(db, "users", "approval_mode_override", "approval_mode_override TEXT DEFAULT NULL");
   ensureColumn(db, "parking_spots", "lot_type", "lot_type TEXT NOT NULL DEFAULT 'general'");

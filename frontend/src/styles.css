@@ -596,6 +596,12 @@ select {
   color: var(--danger);
 }
 
+.inline-message.warning,
+.banner.warning {
+  background: rgba(196, 139, 40, 0.16);
+  color: #8a6117;
+}
+
 .banner {
   margin: 0 16px 12px;
 }

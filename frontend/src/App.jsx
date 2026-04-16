@@ -109,6 +109,20 @@ function getHourSlotOptions() {
   });
 }
 
+function getStudentSlotOptions() {
+  const options = [];
+  for (let minutes = 7 * 60 + 30; minutes <= 20 * 60; minutes += 30) {
+    const hours = String(Math.floor(minutes / 60)).padStart(2, "0");
+    const mins = String(minutes % 60).padStart(2, "0");
+    options.push({
+      label: `${hours}:${mins}`,
+      value: `${hours}:${mins}`,
+      minutes
+    });
+  }
+  return options;
+}
+
 function getStoredSession() {
   const raw = localStorage.getItem("auk-user");
   return raw ? JSON.parse(raw) : null;
@@ -124,9 +138,9 @@ function clearSession() {
   localStorage.removeItem("auk-user");
 }
 
-function clearVerifyQueryParam() {
+function clearQueryParam(key) {
   const url = new URL(window.location.href);
-  url.searchParams.delete("verify");
+  url.searchParams.delete(key);
   window.history.replaceState({}, "", url.toString());
 }
 
@@ -141,18 +155,17 @@ function SplashScreen({ onContinue }) {
   );
 }
 
-function AuthScreen({ mode, onModeChange, onAuthenticated, notice, onResendVerification }) {
-  const [form, setForm] = useState({ name: "", email: "", password: "" });
+function AuthScreen({ mode, resetToken, onModeChange, onAuthenticated, notice, onForgotPassword }) {
+  const [form, setForm] = useState({ name: "", email: "", password: "", confirmPassword: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [resendLoading, setResendLoading] = useState(false);
-  const [resendMessage, setResendMessage] = useState("");
+  const [infoMessage, setInfoMessage] = useState("");
 
   async function handleSubmit(event) {
     event.preventDefault();
     setLoading(true);
     setError("");
-    setResendMessage("");
+    setInfoMessage("");
 
     try {
       if (mode === "register") {
@@ -163,7 +176,25 @@ function AuthScreen({ mode, onModeChange, onAuthenticated, notice, onResendVerif
           email: form.email
         });
         onModeChange("login");
-        setForm({ name: "", email: form.email, password: "" });
+        setForm({ name: "", email: form.email, password: "", confirmPassword: "" });
+        return;
+      }
+
+      if (mode === "forgot") {
+        const payload = await onForgotPassword(form.email);
+        setInfoMessage(payload.message);
+        return;
+      }
+
+      if (mode === "reset") {
+        if (form.password !== form.confirmPassword) {
+          throw new Error("Passwords do not match.");
+        }
+
+        const payload = await api.resetPassword({ token: resetToken, password: form.password });
+        clearQueryParam("reset");
+        saveSession(payload.token, payload.user);
+        onAuthenticated(payload.user, { type: "success", message: payload.message });
         return;
       }
 
@@ -172,26 +203,8 @@ function AuthScreen({ mode, onModeChange, onAuthenticated, notice, onResendVerif
       onAuthenticated(payload.user);
     } catch (requestError) {
       setError(requestError.message);
-      if (requestError.code === "EMAIL_NOT_VERIFIED") {
-        setResendMessage(`Verification is still pending for ${requestError.email || form.email}.`);
-      }
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function handleResendVerification() {
-    setResendLoading(true);
-    setError("");
-    setResendMessage("");
-
-    try {
-      const payload = await onResendVerification(form.email);
-      setResendMessage(payload.message);
-    } catch (requestError) {
-      setError(requestError.message);
-    } finally {
-      setResendLoading(false);
     }
   }
 
@@ -199,8 +212,24 @@ function AuthScreen({ mode, onModeChange, onAuthenticated, notice, onResendVerif
     <div className="screen auth-screen">
       <div className="hero-card">
         <span className="eyebrow">Faculty Reservation Portal</span>
-        <h2>{mode === "register" ? "Create student account" : "Sign in"}</h2>
-        <p>{mode === "register" ? "Students can self-register with an @auk.org email." : "Use your AUK account to continue."}</p>
+        <h2>
+          {mode === "register"
+            ? "Create student account"
+            : mode === "forgot"
+              ? "Forgot password"
+              : mode === "reset"
+                ? "Reset password"
+                : "Sign in"}
+        </h2>
+        <p>
+          {mode === "register"
+            ? "Students can self-register with an @auk.org email."
+            : mode === "forgot"
+              ? "Enter your email and we will send you a reset link."
+              : mode === "reset"
+                ? "Choose a new password for your account."
+                : "Use your AUK account to continue."}
+        </p>
       </div>
 
       <form className="panel form-panel" onSubmit={handleSubmit}>
@@ -211,36 +240,72 @@ function AuthScreen({ mode, onModeChange, onAuthenticated, notice, onResendVerif
           </label>
         ) : null}
 
-        <label>
-          Email
-          <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
-        </label>
+        {mode !== "reset" ? (
+          <label>
+            Email
+            <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
+          </label>
+        ) : null}
 
-        <label>
-          Password
-          <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required />
-        </label>
+        {mode !== "forgot" ? (
+          <label>
+            Password
+            <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required />
+          </label>
+        ) : null}
+
+        {mode === "reset" ? (
+          <label>
+            Confirm password
+            <input type="password" value={form.confirmPassword} onChange={(e) => setForm({ ...form, confirmPassword: e.target.value })} required />
+          </label>
+        ) : null}
 
         {error ? <div className="inline-message error">{error}</div> : null}
         {notice ? <div className={`inline-message ${notice.type}`}>{notice.message}</div> : null}
-        {resendMessage ? <div className="inline-message success">{resendMessage}</div> : null}
+        {infoMessage ? <div className="inline-message success">{infoMessage}</div> : null}
 
         <button className="primary-button" type="submit" disabled={loading}>
-          {loading ? "Please wait..." : mode === "register" ? "Register" : "Login"}
+          {loading
+            ? "Please wait..."
+            : mode === "register"
+              ? "Register"
+              : mode === "forgot"
+                ? "Send reset link"
+                : mode === "reset"
+                  ? "Update password"
+                  : "Login"}
         </button>
-
-        {mode === "login" ? (
-          <button className="ghost-button" type="button" onClick={handleResendVerification} disabled={resendLoading || !form.email}>
-            {resendLoading ? "Sending..." : "Resend verification email"}
-          </button>
-        ) : null}
       </form>
 
       <div className="panel note-panel">
-        <p>{mode === "register" ? "Staff and security accounts are created by Security/Admin." : "Need a student account?"}</p>
-        <button className="ghost-button" onClick={() => onModeChange(mode === "register" ? "login" : "register")}>
-          {mode === "register" ? "Back to login" : "Register as student"}
-        </button>
+        {mode === "login" ? <p>Need a student account or password help?</p> : null}
+        {mode === "register" ? <p>Staff and security accounts are created by Security/Admin.</p> : null}
+        {mode === "forgot" ? <p>Remembered your password?</p> : null}
+        {mode === "reset" ? <p>Need to go back?</p> : null}
+
+        {mode === "login" ? (
+          <>
+            <button className="ghost-button" onClick={() => onModeChange("register")}>
+              Register as student
+            </button>
+            <button className="ghost-button" onClick={() => onModeChange("forgot")}>
+              I forgot my password
+            </button>
+          </>
+        ) : null}
+
+        {mode === "register" ? (
+          <button className="ghost-button" onClick={() => onModeChange("login")}>
+            Back to login
+          </button>
+        ) : null}
+
+        {mode === "forgot" || mode === "reset" ? (
+          <button className="ghost-button" onClick={() => onModeChange("login")}>
+            Back to login
+          </button>
+        ) : null}
       </div>
     </div>
   );
@@ -739,7 +804,8 @@ function SecurityMapScreen({ user, spots, onCreateReservation, onCreateRecurring
 }
 
 function LotReservationScreen({ user, settings, onCreateReservation, onCreateRecurring }) {
-  const studentHourOptions = useMemo(() => getHourSlotOptions(), []);
+  const isUnverified = user.is_verified === false;
+  const studentSlotOptions = useMemo(() => getStudentSlotOptions(), []);
   const todayValue = useMemo(() => formatDateValue(new Date()), []);
   const currentWeekStart = useMemo(() => getMonday(new Date()), []);
   const initialWeekStart = useMemo(() => {
@@ -759,8 +825,8 @@ function LotReservationScreen({ user, settings, onCreateReservation, onCreateRec
   );
   const [selectedLotType, setSelectedLotType] = useState(user.role === "staff" ? "staff" : "general");
   const [form, setForm] = useState({
-    startClock: "08:00",
-    endClock: user.role === "staff" ? "16:00" : "10:00",
+    startClock: "07:30",
+    endClock: user.role === "staff" ? "16:00" : "09:00",
     semesterStart: selectedDate,
     semesterEnd: selectedDate,
     recurrenceType: "weekly"
@@ -857,7 +923,8 @@ function LotReservationScreen({ user, settings, onCreateReservation, onCreateRec
   }
 
   const canGoPrevious = weekStart.getTime() > currentWeekStart.getTime();
-  const studentEndOptions = studentHourOptions.filter((option) => option.value > form.startClock);
+  const selectedStartMinutes = studentSlotOptions.find((option) => option.value === form.startClock)?.minutes ?? 450;
+  const studentEndOptions = studentSlotOptions.filter((option) => option.minutes >= selectedStartMinutes + 90);
   const lotCards = user.role === "student"
     ? [{ key: "general", title: "General Parking Lot", description: "Students reserve from the general parking lot." }]
     : [
@@ -899,51 +966,45 @@ function LotReservationScreen({ user, settings, onCreateReservation, onCreateRec
 
       <div className="panel">
         <h3>{user.role === "student" ? "Reserve a parking space" : "Reserve from selected lot"}</h3>
+        {isUnverified ? (
+          <div className="inline-message warning">
+            Verify your email first. You can browse booking times now, but you cannot reserve a parking spot until your account is verified.
+          </div>
+        ) : null}
         <form className="stack-form" onSubmit={submitReservation}>
-          {user.role === "student" ? (
-            <>
-              <label>
-                Start hour
-                <select
-                  value={form.startClock}
-                  onChange={(event) => {
-                    const nextStart = event.target.value;
-                    const fallbackEnd = studentHourOptions.find((option) => option.value > nextStart)?.value || "20:00";
-                    setForm((current) => ({
-                      ...current,
-                      startClock: nextStart,
-                      endClock: current.endClock > nextStart ? current.endClock : fallbackEnd
-                    }));
-                  }}
-                >
-                  {studentHourOptions.slice(0, -1).map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                End hour
-                <select value={form.endClock} onChange={(event) => setForm({ ...form, endClock: event.target.value })}>
-                  {studentEndOptions.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </label>
-              <p className="helper-text">Students can book whole-hour slots from 8 to 20.</p>
-            </>
-          ) : (
-            <>
-              <label>
-                Start time
-                <input type="time" step="1800" value={form.startClock} onChange={(event) => setForm({ ...form, startClock: event.target.value })} />
-              </label>
-              <label>
-                End time
-                <input type="time" step="1800" value={form.endClock} onChange={(event) => setForm({ ...form, endClock: event.target.value })} />
-              </label>
-            </>
-          )}
-          <button className="primary-button" type="submit" disabled={loading}>
+          <label>
+            Start time
+            <select
+              value={form.startClock}
+              onChange={(event) => {
+                const nextStart = event.target.value;
+                const nextStartMinutes = studentSlotOptions.find((option) => option.value === nextStart)?.minutes ?? 450;
+                const fallbackEnd = studentSlotOptions.find((option) => option.minutes >= nextStartMinutes + 90)?.value || "20:00";
+                setForm((current) => {
+                  const currentEndMinutes = studentSlotOptions.find((option) => option.value === current.endClock)?.minutes ?? 0;
+                  return {
+                    ...current,
+                    startClock: nextStart,
+                    endClock: currentEndMinutes >= nextStartMinutes + 90 ? current.endClock : fallbackEnd
+                  };
+                });
+              }}
+            >
+              {studentSlotOptions.slice(0, -3).map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            End time
+            <select value={form.endClock} onChange={(event) => setForm({ ...form, endClock: event.target.value })}>
+              {studentEndOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <p className="helper-text">Bookings run from 07:30 to 20:00 in 30-minute steps, with a minimum stay of 90 minutes.</p>
+          <button className="primary-button" type="submit" disabled={loading || isUnverified}>
             {loading ? "Saving..." : "Reserve spot"}
           </button>
         </form>
@@ -955,6 +1016,11 @@ function LotReservationScreen({ user, settings, onCreateReservation, onCreateRec
         <div className="panel">
           <h3>Recurring reservation</h3>
           <form className="stack-form" onSubmit={submitRecurring}>
+            {isUnverified ? (
+              <div className="inline-message warning">
+                Verify your email before creating recurring reservations.
+              </div>
+            ) : null}
             <label>
               Semester start
               <input type="date" value={form.semesterStart} onChange={(event) => setForm({ ...form, semesterStart: event.target.value })} />
@@ -970,7 +1036,7 @@ function LotReservationScreen({ user, settings, onCreateReservation, onCreateRec
                 <option value="semester">Semester-long</option>
               </select>
             </label>
-            <button className="secondary-button" type="submit" disabled={loading}>
+            <button className="secondary-button" type="submit" disabled={loading || isUnverified}>
               {loading ? "Saving..." : "Create recurring booking"}
             </button>
           </form>
@@ -983,6 +1049,7 @@ function LotReservationScreen({ user, settings, onCreateReservation, onCreateRec
         <p><strong>Student limit:</strong> {settings.student_max_active_reservations ?? 5} active reservations</p>
         <p><strong>Student max duration:</strong> {settings.student_max_hours ?? 6} hours</p>
         <p><strong>Staff max duration:</strong> {settings.staff_max_hours ?? 12} hours</p>
+        <p><strong>Booking window:</strong> 07:30 to 20:00 with 30-minute steps and a 90-minute minimum stay</p>
       </div>
     </div>
   );
@@ -1234,6 +1301,7 @@ function AdminScreen({
 export default function App() {
   const [booting, setBooting] = useState(true);
   const [authMode, setAuthMode] = useState("login");
+  const [resetToken, setResetToken] = useState("");
   const [user, setUser] = useState(getStoredSession());
   const [authNotice, setAuthNotice] = useState(null);
   const [activeTab, setActiveTab] = useState("map");
@@ -1250,6 +1318,13 @@ export default function App() {
   async function loadData(currentUser = user) {
     if (!currentUser) return;
     try {
+      const me = await api.me();
+      setUser((existing) => {
+        const mergedUser = { ...existing, ...me };
+        return JSON.stringify(existing) === JSON.stringify(mergedUser) ? existing : mergedUser;
+      });
+      saveSession(localStorage.getItem("auk-token"), { ...currentUser, ...me });
+
       const [spotData, reservationData, recurringData] = await Promise.all([
         api.spots(),
         api.meReservations(),
@@ -1284,14 +1359,22 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const token = new URLSearchParams(window.location.search).get("verify");
-    if (!token || user) {
+    const params = new URLSearchParams(window.location.search);
+    const verifyToken = params.get("verify");
+    const passwordResetToken = params.get("reset");
+
+    if (passwordResetToken) {
+      setResetToken(passwordResetToken);
+      setAuthMode("reset");
+    }
+
+    if (!verifyToken) {
       return;
     }
 
     let isMounted = true;
 
-    api.verifyEmail({ token })
+    api.verifyEmail({ token: verifyToken })
       .then((payload) => {
         if (!isMounted) return;
         saveSession(payload.token, payload.user);
@@ -1304,14 +1387,14 @@ export default function App() {
       })
       .finally(() => {
         if (isMounted) {
-          clearVerifyQueryParam();
+          clearQueryParam("verify");
         }
       });
 
     return () => {
       isMounted = false;
     };
-  }, [user]);
+  }, []);
 
   useEffect(() => {
     if (user) {
@@ -1386,6 +1469,12 @@ export default function App() {
     return updated;
   }
 
+  async function handleResendVerification() {
+    if (!user?.email) return;
+    const response = await api.resendVerification({ email: user.email });
+    setMessage(response.message);
+  }
+
   function handleLogout() {
     clearSession();
     setUser(null);
@@ -1408,11 +1497,26 @@ export default function App() {
   }
 
   if (!user) {
+    const authTitle = authMode === "register"
+      ? "Create Account"
+      : authMode === "forgot"
+        ? "Forgot Password"
+        : authMode === "reset"
+          ? "Reset Password"
+          : "Sign In";
+
     return (
-      <PhoneShell title={authMode === "register" ? "Create Account" : "Sign In"}>
+      <PhoneShell title={authTitle}>
         <AuthScreen
           mode={authMode}
-          onModeChange={setAuthMode}
+          resetToken={resetToken}
+          onModeChange={(nextMode) => {
+            setAuthMode(nextMode);
+            if (nextMode !== "reset") {
+              setResetToken("");
+              clearQueryParam("reset");
+            }
+          }}
           notice={authNotice}
           onAuthenticated={(nextUser, notice = null) => {
             if (notice) {
@@ -1424,7 +1528,7 @@ export default function App() {
               setUser(nextUser);
             }
           }}
-          onResendVerification={(email) => api.resendVerification({ email })}
+          onForgotPassword={(email) => api.forgotPassword({ email })}
         />
       </PhoneShell>
     );
@@ -1464,7 +1568,18 @@ export default function App() {
             <p><strong>Name:</strong> {user.name}</p>
             <p><strong>Email:</strong> {user.email}</p>
             <p><strong>Role:</strong> {user.role}</p>
+            <p><strong>Email verification:</strong> {user.is_verified === false ? "Not verified yet" : "Verified"}</p>
           </div>
+
+          {user.is_verified === false ? (
+            <div className="panel">
+              <h3>Verify Email</h3>
+              <p>A verified AUK email is required before you can reserve a parking spot.</p>
+              <button className="secondary-button full-width" onClick={handleResendVerification}>
+                Resend verification email
+              </button>
+            </div>
+          ) : null}
 
           <div className="panel">
             <h3>Booking privileges</h3>
