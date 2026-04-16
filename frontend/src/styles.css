@@ -465,6 +465,32 @@ select {
   margin-bottom: 14px;
 }
 
+.lot-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.lot-card {
+  display: grid;
+  gap: 6px;
+  text-align: left;
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+
+.lot-card span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.lot-card.active {
+  border-color: rgba(12, 122, 90, 0.4);
+  background: rgba(12, 122, 90, 0.09);
+}
+
 .reservation-card,
 .user-row {
   display: flex;
@@ -475,6 +501,17 @@ select {
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.72);
   border: 1px solid var(--line);
+}
+
+.user-control-stack {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
+.user-control-stack select {
+  min-width: 132px;
+  padding: 8px 10px;
 }
 
 .reservation-actions,

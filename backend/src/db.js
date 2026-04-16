@@ -3,6 +3,14 @@ import fs from "fs";
 import path from "path";
 import { config } from "./config.js";
 
+function ensureColumn(db, tableName, columnName, columnDefinition) {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  const exists = columns.some((column) => column.name === columnName);
+  if (!exists) {
+    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnDefinition}`);
+  }
+}
+
 export function createDatabase(dbPath = config.dbPath) {
   if (dbPath !== ":memory:") {
     const absolutePath = path.resolve(process.cwd(), dbPath);
@@ -19,6 +27,7 @@ export function createDatabase(dbPath = config.dbPath) {
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('student', 'staff', 'security')),
+      approval_mode_override TEXT DEFAULT NULL,
       status TEXT NOT NULL DEFAULT 'active',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -28,6 +37,7 @@ export function createDatabase(dbPath = config.dbPath) {
       code TEXT NOT NULL UNIQUE,
       side TEXT NOT NULL,
       type TEXT NOT NULL DEFAULT 'standard',
+      lot_type TEXT NOT NULL DEFAULT 'general',
       is_available INTEGER NOT NULL DEFAULT 1,
       notes TEXT DEFAULT '',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -70,6 +80,7 @@ export function createDatabase(dbPath = config.dbPath) {
       student_max_active_reservations INTEGER NOT NULL DEFAULT 5,
       student_max_hours INTEGER NOT NULL DEFAULT 6,
       staff_max_hours INTEGER NOT NULL DEFAULT 12,
+      default_reservation_mode TEXT NOT NULL DEFAULT 'pending',
       require_admin_approval INTEGER NOT NULL DEFAULT 1,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
@@ -86,10 +97,33 @@ export function createDatabase(dbPath = config.dbPath) {
     );
   `);
 
+  ensureColumn(db, "users", "approval_mode_override", "approval_mode_override TEXT DEFAULT NULL");
+  ensureColumn(db, "parking_spots", "lot_type", "lot_type TEXT NOT NULL DEFAULT 'general'");
+  ensureColumn(db, "app_settings", "default_reservation_mode", "default_reservation_mode TEXT NOT NULL DEFAULT 'pending'");
+
   db.prepare(`
-    INSERT INTO app_settings (id, student_max_active_reservations, student_max_hours, staff_max_hours, require_admin_approval)
-    VALUES (1, 5, 6, 12, 1)
+    INSERT INTO app_settings (id, student_max_active_reservations, student_max_hours, staff_max_hours, default_reservation_mode, require_admin_approval)
+    VALUES (1, 5, 6, 12, 'pending', 1)
     ON CONFLICT(id) DO NOTHING
+  `).run();
+
+  db.prepare(`
+    UPDATE app_settings
+    SET default_reservation_mode = CASE
+      WHEN default_reservation_mode IS NULL OR default_reservation_mode = ''
+      THEN CASE WHEN require_admin_approval = 1 THEN 'pending' ELSE 'approved' END
+      ELSE default_reservation_mode
+    END
+    WHERE id = 1
+  `).run();
+
+  db.prepare(`
+    UPDATE parking_spots
+    SET lot_type = CASE
+      WHEN side = 'right' THEN 'staff'
+      ELSE 'general'
+    END
+    WHERE code LIKE 'L-%' OR code LIKE 'R-%' OR code LIKE 'E-%'
   `).run();
 
   return db;

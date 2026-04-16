@@ -6,7 +6,7 @@ const router = express.Router();
 
 router.get("/", authenticate, authorize("security"), (req, res) => {
   const users = req.db.prepare(`
-    SELECT id, name, email, role, status, created_at
+    SELECT id, name, email, role, status, approval_mode_override, created_at
     FROM users
     ORDER BY role DESC, created_at DESC
   `).all();
@@ -42,7 +42,20 @@ router.post("/", authenticate, authorize("security"), (req, res) => {
 router.patch("/:id/status", authenticate, authorize("security"), (req, res) => {
   const { status } = req.body;
   req.db.prepare("UPDATE users SET status = ? WHERE id = ?").run(status || "active", req.params.id);
-  const user = req.db.prepare("SELECT id, name, email, role, status FROM users WHERE id = ?").get(req.params.id);
+  const user = req.db.prepare("SELECT id, name, email, role, status, approval_mode_override FROM users WHERE id = ?").get(req.params.id);
+  res.json(user);
+});
+
+router.patch("/:id/approval-mode", authenticate, authorize("security"), (req, res) => {
+  const { approvalModeOverride } = req.body;
+  const normalizedValue = approvalModeOverride === "default" ? null : approvalModeOverride;
+
+  if (![null, "pending", "approved"].includes(normalizedValue)) {
+    return res.status(400).json({ message: "Approval mode must be default, pending, or approved." });
+  }
+
+  req.db.prepare("UPDATE users SET approval_mode_override = ? WHERE id = ?").run(normalizedValue, req.params.id);
+  const user = req.db.prepare("SELECT id, name, email, role, status, approval_mode_override FROM users WHERE id = ?").get(req.params.id);
   res.json(user);
 });
 

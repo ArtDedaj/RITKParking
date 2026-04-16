@@ -14,11 +14,11 @@ function createUser(name, email, role, password = "Password123!") {
   `).run(name, email, hashPassword(password), role).lastInsertRowid;
 }
 
-function createSpot(code = "L-01") {
+function createSpot(code = "L-01", side = "left", lotType = "general") {
   return db.prepare(`
-    INSERT INTO parking_spots (code, side, type, is_available, notes)
-    VALUES (?, 'left', 'standard', 1, '')
-  `).run(code).lastInsertRowid;
+    INSERT INTO parking_spots (code, side, type, lot_type, is_available, notes)
+    VALUES (?, ?, 'standard', ?, 1, '')
+  `).run(code, side, lotType).lastInsertRowid;
 }
 
 async function login(email, password) {
@@ -142,5 +142,43 @@ describe("reservation rules", () => {
 
     expect(approvalResponse.status).toBe(200);
     expect(approvalResponse.body.status).toBe("approved");
+  });
+
+  it("auto-assigns a spot from the requested lot", async () => {
+    createUser("Staff", "staff@auk.org", "staff");
+    createSpot("L-01", "left", "general");
+    createSpot("R-01", "right", "staff");
+    const token = await login("staff@auk.org", "Password123!");
+
+    const response = await request(app)
+      .post("/reservations")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        lotType: "staff",
+        startTime: "2026-04-24T08:00:00.000Z",
+        endTime: "2026-04-24T10:00:00.000Z"
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body.spot_code).toBe("R-01");
+  });
+
+  it("uses a user-specific approval override when set", async () => {
+    createUser("Student", "student@auk.org", "student");
+    const spotId = createSpot("L-01", "left", "general");
+    db.prepare("UPDATE users SET approval_mode_override = 'approved' WHERE email = 'student@auk.org'").run();
+    const token = await login("student@auk.org", "Password123!");
+
+    const response = await request(app)
+      .post("/reservations")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        spotId,
+        startTime: "2026-04-26T08:00:00.000Z",
+        endTime: "2026-04-26T10:00:00.000Z"
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body.status).toBe("approved");
   });
 });

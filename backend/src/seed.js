@@ -39,20 +39,20 @@ function seedUsers(targetDb) {
 
 function seedSpots(targetDb) {
   const insert = targetDb.prepare(`
-    INSERT INTO parking_spots (code, side, type, is_available, notes)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO parking_spots (code, side, type, lot_type, is_available, notes)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
 
   for (let index = 1; index <= 20; index += 1) {
-    insert.run(`L-${String(index).padStart(2, "0")}`, "left", "standard", 1, "");
+    insert.run(`L-${String(index).padStart(2, "0")}`, "left", "standard", "general", 1, "");
   }
 
   for (let index = 1; index <= 18; index += 1) {
-    insert.run(`R-${String(index).padStart(2, "0")}`, "right", "standard", 1, "");
+    insert.run(`R-${String(index).padStart(2, "0")}`, "right", "standard", "staff", 1, "");
   }
 
-  insert.run("E-01", "entrance", "accessible", 1, "Accessible parking near the entrance.");
-  insert.run("E-02", "entrance", "vip", 0, "Temporarily unavailable for maintenance.");
+  insert.run("E-01", "entrance", "accessible", "general", 1, "Accessible parking near the entrance.");
+  insert.run("E-02", "entrance", "vip", "staff", 0, "Temporarily unavailable for maintenance.");
 }
 
 function seedReservations(targetDb) {

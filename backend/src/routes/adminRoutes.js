@@ -12,14 +12,20 @@ router.patch("/settings", authenticate, authorize("security"), (req, res) => {
     studentMaxActiveReservations,
     studentMaxHours,
     staffMaxHours,
-    requireAdminApproval
+    requireAdminApproval,
+    defaultReservationMode
   } = req.body;
+
+  if (defaultReservationMode !== undefined && !["pending", "approved"].includes(defaultReservationMode)) {
+    return res.status(400).json({ message: "Default reservation mode must be pending or approved." });
+  }
 
   req.db.prepare(`
     UPDATE app_settings
     SET student_max_active_reservations = COALESCE(?, student_max_active_reservations),
         student_max_hours = COALESCE(?, student_max_hours),
         staff_max_hours = COALESCE(?, staff_max_hours),
+        default_reservation_mode = COALESCE(?, default_reservation_mode),
         require_admin_approval = COALESCE(?, require_admin_approval),
         updated_at = CURRENT_TIMESTAMP
     WHERE id = 1
@@ -27,6 +33,7 @@ router.patch("/settings", authenticate, authorize("security"), (req, res) => {
     studentMaxActiveReservations ?? null,
     studentMaxHours ?? null,
     staffMaxHours ?? null,
+    defaultReservationMode ?? null,
     requireAdminApproval === undefined ? null : Number(Boolean(requireAdminApproval))
   );
 

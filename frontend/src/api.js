@@ -31,6 +31,7 @@ export const api = {
   publicSettings: () => request("/spots/public-settings"),
   users: () => request("/users"),
   createUser: (payload) => request("/users", { method: "POST", body: JSON.stringify(payload) }),
+  updateUserApprovalMode: (id, payload) => request(`/users/${id}/approval-mode`, { method: "PATCH", body: JSON.stringify(payload) }),
   createSpot: (payload) => request("/spots", { method: "POST", body: JSON.stringify(payload) }),
   deleteSpot: (id) => request(`/spots/${id}`, { method: "DELETE" }),
   dashboard: () => request("/admin/dashboard"),

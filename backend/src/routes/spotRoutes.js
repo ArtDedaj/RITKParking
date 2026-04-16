@@ -4,7 +4,10 @@ import { authenticate, authorize } from "../middleware/auth.js";
 const router = express.Router();
 
 router.get("/public-settings", (req, res) => {
-  const settings = req.db.prepare("SELECT student_max_active_reservations, student_max_hours, staff_max_hours, require_admin_approval FROM app_settings WHERE id = 1").get();
+  const settings = req.db.prepare(`
+    SELECT student_max_active_reservations, student_max_hours, staff_max_hours, require_admin_approval, default_reservation_mode
+    FROM app_settings WHERE id = 1
+  `).get();
   res.json(settings);
 });
 
@@ -54,11 +57,11 @@ router.get("/", authenticate, (req, res) => {
 });
 
 router.post("/", authenticate, authorize("security"), (req, res) => {
-  const { code, side, type = "standard", isAvailable = true, notes = "" } = req.body;
+  const { code, side, type = "standard", lotType = "general", isAvailable = true, notes = "" } = req.body;
   const result = req.db.prepare(`
-    INSERT INTO parking_spots (code, side, type, is_available, notes)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(code, side, type, isAvailable ? 1 : 0, notes);
+    INSERT INTO parking_spots (code, side, type, lot_type, is_available, notes)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(code, side, type, lotType, isAvailable ? 1 : 0, notes);
   const spot = req.db.prepare("SELECT * FROM parking_spots WHERE id = ?").get(result.lastInsertRowid);
   res.status(201).json(spot);
 });
@@ -69,14 +72,21 @@ router.delete("/:id", authenticate, authorize("security"), (req, res) => {
 });
 
 router.patch("/:id", authenticate, authorize("security"), (req, res) => {
-  const { isAvailable, notes, type } = req.body;
+  const { isAvailable, notes, type, lotType } = req.body;
   req.db.prepare(`
     UPDATE parking_spots
     SET is_available = COALESCE(?, is_available),
         notes = COALESCE(?, notes),
-        type = COALESCE(?, type)
+        type = COALESCE(?, type),
+        lot_type = COALESCE(?, lot_type)
     WHERE id = ?
-  `).run(isAvailable === undefined ? null : Number(Boolean(isAvailable)), notes ?? null, type ?? null, req.params.id);
+  `).run(
+    isAvailable === undefined ? null : Number(Boolean(isAvailable)),
+    notes ?? null,
+    type ?? null,
+    lotType ?? null,
+    req.params.id
+  );
 
   const spot = req.db.prepare("SELECT * FROM parking_spots WHERE id = ?").get(req.params.id);
   res.json(spot);

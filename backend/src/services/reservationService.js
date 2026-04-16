@@ -24,6 +24,68 @@ function getSpot(db, spotId) {
   return db.prepare("SELECT * FROM parking_spots WHERE id = ?").get(spotId);
 }
 
+function getUserApprovalMode(db, actor, settings) {
+  const userRecord = db.prepare("SELECT approval_mode_override FROM users WHERE id = ?").get(actor.id);
+  if (actor.role === "security") {
+    return "approved";
+  }
+
+  if (userRecord?.approval_mode_override) {
+    return userRecord.approval_mode_override;
+  }
+
+  if (settings.default_reservation_mode) {
+    return settings.default_reservation_mode;
+  }
+
+  return settings.require_admin_approval ? "pending" : "approved";
+}
+
+function isLotTypeAllowed(actor, lotType) {
+  if (!lotType) return true;
+  if (actor.role === "security") return true;
+  if (actor.role === "student") return lotType === "general";
+  if (actor.role === "staff") return ["general", "staff"].includes(lotType);
+  return false;
+}
+
+function findAvailableSpot(db, actor, lotType, startTime, endTime) {
+  if (!isLotTypeAllowed(actor, lotType)) {
+    throw httpError(403, "You do not have permission to reserve that parking lot.");
+  }
+
+  const spots = db.prepare(`
+    SELECT *
+    FROM parking_spots
+    WHERE is_available = 1
+      AND lot_type = ?
+    ORDER BY
+      CASE side WHEN 'left' THEN 1 WHEN 'right' THEN 2 ELSE 3 END,
+      code
+  `).all(lotType);
+
+  const availableSpot = spots.find((spot) => !getConflictingReservation(db, spot.id, startTime, endTime));
+  if (!availableSpot) {
+    throw httpError(409, `No ${lotType} parking spots are available for that time.`);
+  }
+
+  return availableSpot;
+}
+
+function getRecurringConflicts(db, spotId, dayOfWeek, startTime, endTime) {
+  const recurringReservations = db.prepare(`
+    SELECT *
+    FROM recurring_reservations
+    WHERE spot_id = ?
+      AND day_of_week = ?
+      AND status = 'active'
+  `).all(spotId, dayOfWeek);
+
+  return recurringReservations.find((reservation) =>
+    hasOverlap(reservation.start_time, reservation.end_time, startTime, endTime)
+  );
+}
+
 function getConflictingReservation(db, spotId, startTime, endTime) {
   const reservations = db.prepare(`
     SELECT *
@@ -45,12 +107,16 @@ function createAuditLog(db, actorUserId, action, entityType, entityId, details =
 }
 
 export function createReservation(db, actor, payload) {
-  const { spotId, startTime, endTime } = payload;
+  const { spotId, startTime, endTime, lotType } = payload;
   const settings = getSettings(db);
-  const spot = getSpot(db, spotId);
+  const spot = spotId ? getSpot(db, spotId) : findAvailableSpot(db, actor, lotType || "general", startTime, endTime);
 
   if (!spot) {
     throw httpError(404, "Parking spot not found.");
+  }
+
+  if (!isLotTypeAllowed(actor, spot.lot_type)) {
+    throw httpError(403, "You do not have permission to reserve that parking lot.");
   }
 
   if (!spot.is_available) {
@@ -80,21 +146,21 @@ export function createReservation(db, actor, payload) {
     throw httpError(400, `Students may only have ${settings.student_max_active_reservations} active reservations.`);
   }
 
-  const conflictingReservation = getConflictingReservation(db, spotId, startTime, endTime);
+  const conflictingReservation = getConflictingReservation(db, spot.id, startTime, endTime);
   if (conflictingReservation && actor.role !== "security") {
     throw httpError(409, "This parking spot is already booked for the selected time.");
   }
 
-  const status = actor.role === "security" || !settings.require_admin_approval ? "approved" : "pending";
+  const status = getUserApprovalMode(db, actor, settings);
   const result = db.prepare(`
     INSERT INTO reservations (user_id, spot_id, start_time, end_time, status)
     VALUES (?, ?, ?, ?, ?)
-  `).run(actor.id, spotId, startTime, endTime, status);
+  `).run(actor.id, spot.id, startTime, endTime, status);
 
   createAuditLog(db, actor.id, "reservation_created", "reservation", result.lastInsertRowid, JSON.stringify(payload));
 
   return db.prepare(`
-    SELECT reservations.*, parking_spots.code AS spot_code
+    SELECT reservations.*, parking_spots.code AS spot_code, parking_spots.lot_type
     FROM reservations
     JOIN parking_spots ON parking_spots.id = reservations.spot_id
     WHERE reservations.id = ?
@@ -106,11 +172,15 @@ export function createRecurringReservation(db, actor, payload) {
     throw httpError(403, "Only staff and security can create recurring reservations.");
   }
 
-  const { spotId, dayOfWeek, startTime, endTime, semesterStart, semesterEnd, recurrenceType = "weekly" } = payload;
-  const spot = getSpot(db, spotId);
+  const { spotId, lotType = "general", dayOfWeek, startTime, endTime, semesterStart, semesterEnd, recurrenceType = "weekly" } = payload;
+  const spot = spotId ? getSpot(db, spotId) : findAvailableSpot(db, actor, lotType, startTime, endTime);
 
   if (!spot) {
     throw httpError(404, "Parking spot not found.");
+  }
+
+  if (!isLotTypeAllowed(actor, spot.lot_type)) {
+    throw httpError(403, "You do not have permission to reserve that parking lot.");
   }
 
   if (!spot.is_available) {
@@ -125,15 +195,24 @@ export function createRecurringReservation(db, actor, payload) {
     throw httpError(400, "Semester end date must be after semester start date.");
   }
 
+  if (getRecurringConflicts(db, spot.id, dayOfWeek, startTime, endTime)) {
+    throw httpError(409, "This parking spot already has a recurring reservation for that time.");
+  }
+
   const result = db.prepare(`
     INSERT INTO recurring_reservations
       (user_id, spot_id, day_of_week, start_time, end_time, semester_start, semester_end, recurrence_type, status)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
-  `).run(actor.id, spotId, dayOfWeek, startTime, endTime, semesterStart, semesterEnd, recurrenceType);
+  `).run(actor.id, spot.id, dayOfWeek, startTime, endTime, semesterStart, semesterEnd, recurrenceType);
 
   createAuditLog(db, actor.id, "recurring_reservation_created", "recurring_reservation", result.lastInsertRowid, JSON.stringify(payload));
 
-  return db.prepare("SELECT * FROM recurring_reservations WHERE id = ?").get(result.lastInsertRowid);
+  return db.prepare(`
+    SELECT recurring_reservations.*, parking_spots.code AS spot_code, parking_spots.lot_type
+    FROM recurring_reservations
+    JOIN parking_spots ON parking_spots.id = recurring_reservations.spot_id
+    WHERE recurring_reservations.id = ?
+  `).get(result.lastInsertRowid);
 }
 
 export function updateReservationStatus(db, actor, reservationId, status, approvalNote = "") {

@@ -8,11 +8,19 @@ const navByRole = {
 };
 
 const labels = {
-  map: "Map",
+  map: "Reserve",
   reservations: "My Bookings",
   profile: "Profile",
   admin: "Admin"
 };
+
+function getTabLabel(role, tab) {
+  if (tab === "map") {
+    return role === "security" ? "Map" : "Reserve";
+  }
+
+  return labels[tab];
+}
 
 function formatDateTime(value) {
   return new Date(value).toLocaleString([], {
@@ -83,6 +91,12 @@ function getWeekdays(weekStart) {
       dayLabel: date.toLocaleDateString([], { weekday: "short" })
     };
   });
+}
+
+function formatReservationMode(value) {
+  if (value === "approved") return "Auto-approved";
+  if (value === "pending") return "Pending approval";
+  return "Use default";
 }
 
 function getStoredSession() {
@@ -289,7 +303,7 @@ function WeekStrip({ dates, selectedDate, onSelect, onPreviousWeek, onNextWeek, 
   return (
     <div className="week-strip">
       <button className={`week-arrow ${!canGoPrevious ? "disabled" : ""}`} onClick={onPreviousWeek} disabled={!canGoPrevious}>
-        ‹
+        {"<"}
       </button>
       <div className="date-strip" role="tablist" aria-label="Choose reservation date">
         {dates.map((date) => {
@@ -308,7 +322,7 @@ function WeekStrip({ dates, selectedDate, onSelect, onPreviousWeek, onNextWeek, 
         })}
       </div>
       <button className="week-arrow" onClick={onNextWeek}>
-        ›
+        {">"}
       </button>
     </div>
   );
@@ -447,7 +461,7 @@ function SpotModal({
   );
 }
 
-function MapScreen({ user, spots, onCreateReservation, onCreateRecurring, onUpdateSpot }) {
+function SecurityMapScreen({ user, spots, onCreateReservation, onCreateRecurring, onUpdateSpot }) {
   const todayValue = useMemo(() => formatDateValue(new Date()), []);
   const currentWeekStart = useMemo(() => getMonday(new Date()), []);
   const initialWeekStart = useMemo(() => {
@@ -669,6 +683,210 @@ function MapScreen({ user, spots, onCreateReservation, onCreateRecurring, onUpda
   );
 }
 
+function LotReservationScreen({ user, settings, onCreateReservation, onCreateRecurring }) {
+  const todayValue = useMemo(() => formatDateValue(new Date()), []);
+  const currentWeekStart = useMemo(() => getMonday(new Date()), []);
+  const initialWeekStart = useMemo(() => {
+    const currentWeekDates = getWeekdays(currentWeekStart);
+    if (currentWeekDates.some((date) => date.value >= todayValue)) {
+      return currentWeekStart;
+    }
+
+    const nextWeek = new Date(currentWeekStart);
+    nextWeek.setDate(nextWeek.getDate() + 7);
+    return nextWeek;
+  }, [currentWeekStart, todayValue]);
+  const [weekStart, setWeekStart] = useState(initialWeekStart);
+  const weekDates = useMemo(() => getWeekdays(weekStart), [weekStart]);
+  const [selectedDate, setSelectedDate] = useState(
+    weekDates.find((date) => date.value >= todayValue)?.value || weekDates[0]?.value || formatDateValue(new Date())
+  );
+  const [selectedLotType, setSelectedLotType] = useState(user.role === "staff" ? "staff" : "general");
+  const [form, setForm] = useState({
+    startClock: "08:00",
+    endClock: user.role === "staff" ? "16:00" : "10:00",
+    semesterStart: selectedDate,
+    semesterEnd: selectedDate,
+    recurrenceType: "weekly"
+  });
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!weekDates.some((date) => date.value === selectedDate && date.value >= todayValue)) {
+      const nextDate = weekDates.find((date) => date.value >= todayValue)?.value || weekDates[0]?.value || selectedDate;
+      setSelectedDate(nextDate);
+      setForm((current) => ({ ...current, semesterStart: nextDate, semesterEnd: nextDate }));
+    }
+  }, [weekDates, selectedDate, todayValue]);
+
+  function handleDateSelect(value) {
+    setSelectedDate(value);
+    setForm((current) => ({
+      ...current,
+      semesterStart: current.semesterStart < value ? value : current.semesterStart,
+      semesterEnd: current.semesterEnd < value ? value : current.semesterEnd
+    }));
+    setMessage("");
+    setError("");
+  }
+
+  function goToPreviousWeek() {
+    const previous = new Date(weekStart);
+    previous.setDate(weekStart.getDate() - 7);
+    if (previous < currentWeekStart) {
+      return;
+    }
+    setWeekStart(previous);
+  }
+
+  function goToNextWeek() {
+    const next = new Date(weekStart);
+    next.setDate(weekStart.getDate() + 7);
+    setWeekStart(next);
+  }
+
+  async function submitReservation(event) {
+    event.preventDefault();
+    setLoading(true);
+    setMessage("");
+    setError("");
+
+    try {
+      const response = await onCreateReservation({
+        lotType: user.role === "student" ? "general" : selectedLotType,
+        startTime: new Date(`${selectedDate}T${form.startClock}`).toISOString(),
+        endTime: new Date(`${selectedDate}T${form.endClock}`).toISOString()
+      });
+      setMessage(`Reserved ${response.spot_code} as ${response.status}.`);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function submitRecurring(event) {
+    event.preventDefault();
+    setLoading(true);
+    setMessage("");
+    setError("");
+
+    try {
+      const response = await onCreateRecurring({
+        lotType: selectedLotType,
+        dayOfWeek: getDayOfWeek(selectedDate),
+        startTime: new Date(`${selectedDate}T${form.startClock}`).toISOString(),
+        endTime: new Date(`${selectedDate}T${form.endClock}`).toISOString(),
+        semesterStart: form.semesterStart,
+        semesterEnd: form.semesterEnd,
+        recurrenceType: form.recurrenceType
+      });
+      setMessage(`Recurring booking saved for ${response.spot_code}.`);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const canGoPrevious = weekStart.getTime() > currentWeekStart.getTime();
+  const lotCards = user.role === "student"
+    ? [{ key: "general", title: "General Parking Lot", description: "Students reserve from the general parking lot." }]
+    : [
+        { key: "general", title: "General Parking Lot", description: "Shared lot available for staff reservations." },
+        { key: "staff", title: "Staff Parking Lot", description: "Staff-only lot with dedicated availability." }
+      ];
+
+  return (
+    <div className="screen">
+      <div className="panel minimal-panel">
+        <WeekStrip
+          dates={weekDates}
+          selectedDate={selectedDate}
+          onSelect={handleDateSelect}
+          onPreviousWeek={goToPreviousWeek}
+          onNextWeek={goToNextWeek}
+          canGoPrevious={canGoPrevious}
+          todayValue={todayValue}
+        />
+
+        <div className="selected-date-banner">
+          <strong>{formatLongDate(selectedDate)}</strong>
+        </div>
+
+        <div className="lot-grid">
+          {lotCards.map((lot) => (
+            <button
+              key={lot.key}
+              className={`lot-card ${selectedLotType === lot.key ? "active" : ""}`}
+              onClick={() => setSelectedLotType(lot.key)}
+              disabled={user.role === "student"}
+            >
+              <strong>{lot.title}</strong>
+              <span>{lot.description}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="panel">
+        <h3>{user.role === "student" ? "Reserve a parking space" : "Reserve from selected lot"}</h3>
+        <form className="stack-form" onSubmit={submitReservation}>
+          <label>
+            Start time
+            <input type="time" step="1800" value={form.startClock} onChange={(event) => setForm({ ...form, startClock: event.target.value })} />
+          </label>
+          <label>
+            End time
+            <input type="time" step="1800" value={form.endClock} onChange={(event) => setForm({ ...form, endClock: event.target.value })} />
+          </label>
+          <button className="primary-button" type="submit" disabled={loading}>
+            {loading ? "Saving..." : "Reserve spot"}
+          </button>
+        </form>
+        {error ? <div className="inline-message error">{error}</div> : null}
+        {message ? <div className="inline-message success">{message}</div> : null}
+      </div>
+
+      {user.role === "staff" ? (
+        <div className="panel">
+          <h3>Recurring reservation</h3>
+          <form className="stack-form" onSubmit={submitRecurring}>
+            <label>
+              Semester start
+              <input type="date" value={form.semesterStart} onChange={(event) => setForm({ ...form, semesterStart: event.target.value })} />
+            </label>
+            <label>
+              Semester end
+              <input type="date" value={form.semesterEnd} onChange={(event) => setForm({ ...form, semesterEnd: event.target.value })} />
+            </label>
+            <label>
+              Recurrence type
+              <select value={form.recurrenceType} onChange={(event) => setForm({ ...form, recurrenceType: event.target.value })}>
+                <option value="weekly">Weekly</option>
+                <option value="semester">Semester-long</option>
+              </select>
+            </label>
+            <button className="secondary-button" type="submit" disabled={loading}>
+              {loading ? "Saving..." : "Create recurring booking"}
+            </button>
+          </form>
+        </div>
+      ) : null}
+
+      <div className="panel">
+        <h3>Reservation policy</h3>
+        <p><strong>Default approval mode:</strong> {formatReservationMode(settings.default_reservation_mode)}</p>
+        <p><strong>Student limit:</strong> {settings.student_max_active_reservations ?? 5} active reservations</p>
+        <p><strong>Student max duration:</strong> {settings.student_max_hours ?? 6} hours</p>
+        <p><strong>Staff max duration:</strong> {settings.staff_max_hours ?? 12} hours</p>
+      </div>
+    </div>
+  );
+}
+
 function ReservationList({ title, reservations, onCancel, showUser = false }) {
   return (
     <div className="panel">
@@ -682,6 +900,7 @@ function ReservationList({ title, reservations, onCancel, showUser = false }) {
             <div>
               <strong>{reservation.spot_code}</strong>
               <p>{formatDateTime(reservation.start_time)} to {formatDateTime(reservation.end_time)}</p>
+              {reservation.lot_type ? <small>{reservation.lot_type} lot</small> : null}
               {showUser && reservation.user_name ? <small>{reservation.user_name} | {reservation.user_role}</small> : null}
             </div>
             <div className="reservation-actions">
@@ -696,13 +915,26 @@ function ReservationList({ title, reservations, onCancel, showUser = false }) {
   );
 }
 
-function AdminScreen({ dashboard, users, approvals, settings, onApprove, onReject, onCreateUser, onSaveSettings, onCreateSpot, spots }) {
+function AdminScreen({
+  dashboard,
+  users,
+  approvals,
+  settings,
+  onApprove,
+  onReject,
+  onCreateUser,
+  onSaveSettings,
+  onCreateSpot,
+  onUpdateUserApprovalMode,
+  spots
+}) {
   const [userForm, setUserForm] = useState({ name: "", email: "", password: "", role: "staff" });
-  const [spotForm, setSpotForm] = useState({ code: "", side: "left", type: "standard", notes: "" });
+  const [spotForm, setSpotForm] = useState({ code: "", side: "left", type: "standard", lotType: "general", notes: "" });
   const [settingsForm, setSettingsForm] = useState({
     studentMaxActiveReservations: settings.student_max_active_reservations ?? 5,
     studentMaxHours: settings.student_max_hours ?? 6,
     staffMaxHours: settings.staff_max_hours ?? 12,
+    defaultReservationMode: settings.default_reservation_mode ?? "pending",
     requireAdminApproval: Boolean(settings.require_admin_approval)
   });
 
@@ -711,6 +943,7 @@ function AdminScreen({ dashboard, users, approvals, settings, onApprove, onRejec
       studentMaxActiveReservations: settings.student_max_active_reservations ?? 5,
       studentMaxHours: settings.student_max_hours ?? 6,
       staffMaxHours: settings.staff_max_hours ?? 12,
+      defaultReservationMode: settings.default_reservation_mode ?? "pending",
       requireAdminApproval: Boolean(settings.require_admin_approval)
     });
   }, [settings]);
@@ -801,6 +1034,13 @@ function AdminScreen({ dashboard, users, approvals, settings, onApprove, onRejec
             Staff max hours
             <input type="number" value={settingsForm.staffMaxHours} onChange={(e) => setSettingsForm({ ...settingsForm, staffMaxHours: Number(e.target.value) })} />
           </label>
+          <label>
+            Default reservation mode
+            <select value={settingsForm.defaultReservationMode} onChange={(e) => setSettingsForm({ ...settingsForm, defaultReservationMode: e.target.value })}>
+              <option value="pending">Pending approval</option>
+              <option value="approved">Auto-approved</option>
+            </select>
+          </label>
           <label className="toggle-label">
             <input type="checkbox" checked={settingsForm.requireAdminApproval} onChange={(e) => setSettingsForm({ ...settingsForm, requireAdminApproval: e.target.checked })} />
             Require admin approval
@@ -814,7 +1054,7 @@ function AdminScreen({ dashboard, users, approvals, settings, onApprove, onRejec
         <form className="stack-form" onSubmit={(e) => {
           e.preventDefault();
           onCreateSpot({ ...spotForm, isAvailable: true });
-          setSpotForm({ code: "", side: "left", type: "standard", notes: "" });
+          setSpotForm({ code: "", side: "left", type: "standard", lotType: "general", notes: "" });
         }}>
           <label>
             Spot code
@@ -833,6 +1073,13 @@ function AdminScreen({ dashboard, users, approvals, settings, onApprove, onRejec
             <input value={spotForm.type} onChange={(e) => setSpotForm({ ...spotForm, type: e.target.value })} />
           </label>
           <label>
+            Lot type
+            <select value={spotForm.lotType} onChange={(e) => setSpotForm({ ...spotForm, lotType: e.target.value })}>
+              <option value="general">General</option>
+              <option value="staff">Staff</option>
+            </select>
+          </label>
+          <label>
             Notes
             <input value={spotForm.notes} onChange={(e) => setSpotForm({ ...spotForm, notes: e.target.value })} />
           </label>
@@ -849,7 +1096,17 @@ function AdminScreen({ dashboard, users, approvals, settings, onApprove, onRejec
                 <strong>{account.name}</strong>
                 <p>{account.email}</p>
               </div>
-              <StatusPill value={account.role} />
+              <div className="user-control-stack">
+                <StatusPill value={account.role} />
+                <select
+                  value={account.approval_mode_override || "default"}
+                  onChange={(event) => onUpdateUserApprovalMode(account.id, event.target.value)}
+                >
+                  <option value="default">Use default</option>
+                  <option value="pending">Pending approval</option>
+                  <option value="approved">Auto-approved</option>
+                </select>
+              </div>
             </div>
           ))}
         </div>
@@ -862,7 +1119,7 @@ function AdminScreen({ dashboard, users, approvals, settings, onApprove, onRejec
             <div className="user-row" key={spot.id}>
               <div>
                 <strong>{spot.code}</strong>
-                <p>{spot.side} | {spot.type}</p>
+                <p>{spot.side} | {spot.lot_type} | {spot.type}</p>
               </div>
               <StatusPill value={spotVisualStatus(spot)} />
             </div>
@@ -932,8 +1189,6 @@ export default function App() {
   }, [user]);
 
   const visibleReservations = useMemo(() => reservations.filter((item) => ["pending", "approved"].includes(item.status)), [reservations]);
-  const historyReservations = useMemo(() => reservations.filter((item) => ["rejected", "cancelled", "completed"].includes(item.status)), [reservations]);
-
   async function handleCreateReservation(payload) {
     setError("");
     const response = await api.createReservation(payload);
@@ -986,6 +1241,12 @@ export default function App() {
     await loadData();
   }
 
+  async function handleUpdateUserApprovalMode(userId, approvalModeOverride) {
+    await api.updateUserApprovalMode(userId, { approvalModeOverride });
+    setMessage("User approval mode updated.");
+    await loadData();
+  }
+
   async function handleUpdateSpot(id, payload) {
     const updated = await api.updateSpot(id, payload);
     setMessage("Spot updated.");
@@ -1024,11 +1285,15 @@ export default function App() {
   const tabs = navByRole[user.role];
 
   return (
-    <PhoneShell title={labels[activeTab]}>
+    <PhoneShell title={getTabLabel(user.role, activeTab)}>
       {message ? <div className="banner success">{message}</div> : null}
       {error ? <div className="banner error">{error}</div> : null}
 
-      {activeTab === "map" ? <MapScreen user={user} spots={spots} onCreateReservation={handleCreateReservation} onCreateRecurring={handleCreateRecurring} onUpdateSpot={handleUpdateSpot} /> : null}
+      {activeTab === "map" ? (
+        user.role === "security"
+          ? <SecurityMapScreen user={user} spots={spots} onCreateReservation={handleCreateReservation} onCreateRecurring={handleCreateRecurring} onUpdateSpot={handleUpdateSpot} />
+          : <LotReservationScreen user={user} settings={settings} onCreateReservation={handleCreateReservation} onCreateRecurring={handleCreateRecurring} />
+      ) : null}
       {activeTab === "reservations" ? (
         <div className="screen">
           <ReservationList title="Active reservations" reservations={visibleReservations} onCancel={handleCancelReservation} showUser={user.role === "security"} />
@@ -1069,6 +1334,7 @@ export default function App() {
           onCreateUser={handleCreateUser}
           onSaveSettings={handleSaveSettings}
           onCreateSpot={handleCreateSpot}
+          onUpdateUserApprovalMode={handleUpdateUserApprovalMode}
           spots={spots}
         />
       ) : null}
@@ -1076,7 +1342,7 @@ export default function App() {
       <nav className="bottom-nav" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
         {tabs.map((tab) => (
           <button key={tab} className={tab === activeTab ? "active" : ""} onClick={() => setActiveTab(tab)}>
-            {labels[tab]}
+            {getTabLabel(user.role, tab)}
           </button>
         ))}
       </nav>
