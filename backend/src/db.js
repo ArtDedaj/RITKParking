@@ -27,6 +27,10 @@ export function createDatabase(dbPath = config.dbPath) {
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL CHECK(role IN ('student', 'staff', 'security')),
+      is_verified INTEGER NOT NULL DEFAULT 1,
+      verification_token_hash TEXT DEFAULT NULL,
+      verification_expires_at TEXT DEFAULT NULL,
+      verified_at TEXT DEFAULT CURRENT_TIMESTAMP,
       approval_mode_override TEXT DEFAULT NULL,
       status TEXT NOT NULL DEFAULT 'active',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -97,9 +101,26 @@ export function createDatabase(dbPath = config.dbPath) {
     );
   `);
 
+  ensureColumn(db, "users", "is_verified", "is_verified INTEGER NOT NULL DEFAULT 1");
+  ensureColumn(db, "users", "verification_token_hash", "verification_token_hash TEXT DEFAULT NULL");
+  ensureColumn(db, "users", "verification_expires_at", "verification_expires_at TEXT DEFAULT NULL");
+  ensureColumn(db, "users", "verified_at", "verified_at TEXT DEFAULT CURRENT_TIMESTAMP");
   ensureColumn(db, "users", "approval_mode_override", "approval_mode_override TEXT DEFAULT NULL");
   ensureColumn(db, "parking_spots", "lot_type", "lot_type TEXT NOT NULL DEFAULT 'general'");
   ensureColumn(db, "app_settings", "default_reservation_mode", "default_reservation_mode TEXT NOT NULL DEFAULT 'approved'");
+
+  db.prepare(`
+    UPDATE users
+    SET is_verified = 1,
+        verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP)
+    WHERE is_verified IS NULL
+  `).run();
+
+  db.prepare(`
+    UPDATE users
+    SET verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP)
+    WHERE is_verified = 1
+  `).run();
 
   db.prepare(`
     INSERT INTO app_settings (id, student_max_active_reservations, student_max_hours, staff_max_hours, default_reservation_mode, require_admin_approval)

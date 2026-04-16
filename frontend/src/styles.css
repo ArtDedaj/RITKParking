@@ -28,7 +28,8 @@ body {
 
 button,
 input,
-select {
+select,
+a {
   font: inherit;
 }
 
@@ -607,6 +608,12 @@ select {
 
 .note-panel {
   text-align: center;
+}
+
+.inline-link {
+  color: var(--brand-strong);
+  font-weight: 700;
+  text-decoration: none;
 }
 
 .modal-backdrop {

@@ -13,7 +13,11 @@ async function request(path, options = {}) {
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.message || "Request failed.");
+    const error = new Error(data.message || "Request failed.");
+    error.code = data.code;
+    error.email = data.email;
+    error.previewUrl = data.previewUrl;
+    throw error;
   }
 
   return data;
@@ -22,6 +26,8 @@ async function request(path, options = {}) {
 export const api = {
   login: (payload) => request("/auth/login", { method: "POST", body: JSON.stringify(payload) }),
   register: (payload) => request("/auth/register", { method: "POST", body: JSON.stringify(payload) }),
+  verifyEmail: (payload) => request("/auth/verify-email", { method: "POST", body: JSON.stringify(payload) }),
+  resendVerification: (payload) => request("/auth/resend-verification", { method: "POST", body: JSON.stringify(payload) }),
   meReservations: () => request("/reservations"),
   recurringReservations: () => request("/reservations/recurring/list"),
   createReservation: (payload) => request("/reservations", { method: "POST", body: JSON.stringify(payload) }),

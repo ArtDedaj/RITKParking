@@ -4,8 +4,8 @@ import { hashPassword } from "./utils/password.js";
 
 export function ensureDemoUsers(targetDb) {
   const insert = targetDb.prepare(`
-    INSERT INTO users (name, email, password_hash, role, status)
-    VALUES (?, ?, ?, ?, 'active')
+    INSERT INTO users (name, email, password_hash, role, is_verified, verified_at, status)
+    VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, 'active')
   `);
 
   [
@@ -19,6 +19,15 @@ export function ensureDemoUsers(targetDb) {
     const existingUser = targetDb.prepare("SELECT id FROM users WHERE email = ?").get(email);
     if (!existingUser) {
       insert.run(name, email, hashPassword(password), role);
+    } else {
+      targetDb.prepare(`
+        UPDATE users
+        SET is_verified = 1,
+            verification_token_hash = NULL,
+            verification_expires_at = NULL,
+            verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP)
+        WHERE email = ?
+      `).run(email);
     }
   });
 }

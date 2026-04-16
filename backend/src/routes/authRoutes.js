@@ -2,6 +2,7 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import { comparePassword, hashPassword } from "../utils/password.js";
 import { config } from "../config.js";
+import { issueVerificationEmail, verifyEmailToken } from "../services/emailVerificationService.js";
 
 const router = express.Router();
 
@@ -12,7 +13,7 @@ function issueToken(user) {
 }
 
 router.post("/register", (req, res, next) => {
-  try {
+  (async () => {
     const { name, email, password } = req.body;
 
     if (!name || !email || !password) {
@@ -30,15 +31,20 @@ router.post("/register", (req, res, next) => {
     }
 
     const result = req.db.prepare(`
-      INSERT INTO users (name, email, password_hash, role, status)
-      VALUES (?, ?, ?, 'student', 'active')
+      INSERT INTO users (name, email, password_hash, role, is_verified, verification_token_hash, verification_expires_at, verified_at, status)
+      VALUES (?, ?, ?, 'student', 0, NULL, NULL, NULL, 'active')
     `).run(name.trim(), normalizedEmail, hashPassword(password));
 
-    const user = req.db.prepare("SELECT id, name, email, role, status FROM users WHERE id = ?").get(result.lastInsertRowid);
-    res.status(201).json({ token: issueToken(user), user });
-  } catch (error) {
+    const user = req.db.prepare("SELECT id, name, email, role, status, is_verified FROM users WHERE id = ?").get(result.lastInsertRowid);
+    const { verificationUrl } = await issueVerificationEmail(req.db, user);
+    res.status(201).json({
+      message: "Account created. Please verify your @auk.org email before signing in.",
+      user,
+      previewUrl: verificationUrl
+    });
+  })().catch((error) => {
     next(error);
-  }
+  });
 });
 
 router.post("/login", (req, res, next) => {
@@ -51,18 +57,76 @@ router.post("/login", (req, res, next) => {
       return res.status(401).json({ message: "Invalid email or password." });
     }
 
+    if (!user.is_verified) {
+      return res.status(403).json({
+        code: "EMAIL_NOT_VERIFIED",
+        message: "Please verify your @auk.org email before signing in.",
+        email: user.email
+      });
+    }
+
     const safeUser = {
       id: user.id,
       name: user.name,
       email: user.email,
       role: user.role,
-      status: user.status
+      status: user.status,
+      is_verified: Boolean(user.is_verified)
     };
 
     res.json({ token: issueToken(safeUser), user: safeUser });
   } catch (error) {
     next(error);
   }
+});
+
+router.post("/verify-email", (req, res, next) => {
+  try {
+    const token = String(req.body?.token || "").trim();
+    if (!token) {
+      return res.status(400).json({ message: "Verification token is required." });
+    }
+
+    const user = verifyEmailToken(req.db, token);
+    res.json({
+      message: "Email verified successfully.",
+      token: issueToken(user),
+      user
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/resend-verification", (req, res, next) => {
+  (async () => {
+    const normalizedEmail = String(req.body?.email || "").trim().toLowerCase();
+    if (!normalizedEmail) {
+      return res.status(400).json({ message: "Email is required." });
+    }
+
+    const user = req.db.prepare(`
+      SELECT id, name, email, role, status, is_verified
+      FROM users
+      WHERE email = ?
+    `).get(normalizedEmail);
+
+    if (!user) {
+      return res.status(404).json({ message: "No account exists for that email." });
+    }
+
+    if (user.is_verified) {
+      return res.json({ message: "This email is already verified." });
+    }
+
+    const { verificationUrl } = await issueVerificationEmail(req.db, user);
+    res.json({
+      message: "A new verification email has been sent.",
+      previewUrl: verificationUrl
+    });
+  })().catch((error) => {
+    next(error);
+  });
 });
 
 router.post("/google", (req, res) => {

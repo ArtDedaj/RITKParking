@@ -124,6 +124,12 @@ function clearSession() {
   localStorage.removeItem("auk-user");
 }
 
+function clearVerifyQueryParam() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("verify");
+  window.history.replaceState({}, "", url.toString());
+}
+
 function SplashScreen({ onContinue }) {
   return (
     <div className="screen splash-screen">
@@ -135,27 +141,61 @@ function SplashScreen({ onContinue }) {
   );
 }
 
-function AuthScreen({ mode, onModeChange, onAuthenticated }) {
+function AuthScreen({ mode, onModeChange, onAuthenticated, notice, onResendVerification }) {
   const [form, setForm] = useState({ name: "", email: "", password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendMessage, setResendMessage] = useState("");
+  const [resendPreviewUrl, setResendPreviewUrl] = useState("");
 
   async function handleSubmit(event) {
     event.preventDefault();
     setLoading(true);
     setError("");
+    setResendMessage("");
 
     try {
-      const payload = mode === "register"
-        ? await api.register(form)
-        : await api.login({ email: form.email, password: form.password });
+      if (mode === "register") {
+        const payload = await api.register(form);
+        onAuthenticated(null, {
+          type: "success",
+          message: payload.message,
+          email: form.email,
+          previewUrl: payload.previewUrl
+        });
+        onModeChange("login");
+        setForm({ name: "", email: form.email, password: "" });
+        return;
+      }
 
+      const payload = await api.login({ email: form.email, password: form.password });
       saveSession(payload.token, payload.user);
       onAuthenticated(payload.user);
     } catch (requestError) {
       setError(requestError.message);
+      if (requestError.code === "EMAIL_NOT_VERIFIED") {
+        setResendMessage(`Verification is still pending for ${requestError.email || form.email}.`);
+      }
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleResendVerification() {
+    setResendLoading(true);
+    setError("");
+    setResendMessage("");
+    setResendPreviewUrl("");
+
+    try {
+      const payload = await onResendVerification(form.email);
+      setResendMessage(payload.previewUrl ? `${payload.message} Development link ready below.` : payload.message);
+      setResendPreviewUrl(payload.previewUrl || "");
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setResendLoading(false);
     }
   }
 
@@ -186,11 +226,33 @@ function AuthScreen({ mode, onModeChange, onAuthenticated }) {
         </label>
 
         {error ? <div className="inline-message error">{error}</div> : null}
+        {notice ? <div className={`inline-message ${notice.type}`}>{notice.message}</div> : null}
+        {resendMessage ? <div className="inline-message success">{resendMessage}</div> : null}
 
         <button className="primary-button" type="submit" disabled={loading}>
           {loading ? "Please wait..." : mode === "register" ? "Register" : "Login"}
         </button>
+
+        {mode === "login" ? (
+          <button className="ghost-button" type="button" onClick={handleResendVerification} disabled={resendLoading || !form.email}>
+            {resendLoading ? "Sending..." : "Resend verification email"}
+          </button>
+        ) : null}
       </form>
+
+      {notice?.previewUrl ? (
+        <div className="panel note-panel">
+          <p>SMTP is not configured yet, so the verification link is shown here for testing.</p>
+          <a className="inline-link" href={notice.previewUrl}>Open verification link</a>
+        </div>
+      ) : null}
+
+      {resendPreviewUrl ? (
+        <div className="panel note-panel">
+          <p>Latest development verification link:</p>
+          <a className="inline-link" href={resendPreviewUrl}>Open verification link</a>
+        </div>
+      ) : null}
 
       <div className="panel note-panel">
         <p>{mode === "register" ? "Staff and security accounts are created by Security/Admin." : "Need a student account?"}</p>
@@ -1191,6 +1253,7 @@ export default function App() {
   const [booting, setBooting] = useState(true);
   const [authMode, setAuthMode] = useState("login");
   const [user, setUser] = useState(getStoredSession());
+  const [authNotice, setAuthNotice] = useState(null);
   const [activeTab, setActiveTab] = useState("map");
   const [spots, setSpots] = useState([]);
   const [reservations, setReservations] = useState([]);
@@ -1237,6 +1300,36 @@ export default function App() {
     const timer = setTimeout(() => setBooting(false), 900);
     return () => clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    const token = new URLSearchParams(window.location.search).get("verify");
+    if (!token || user) {
+      return;
+    }
+
+    let isMounted = true;
+
+    api.verifyEmail({ token })
+      .then((payload) => {
+        if (!isMounted) return;
+        saveSession(payload.token, payload.user);
+        setAuthNotice({ type: "success", message: payload.message });
+        setUser(payload.user);
+      })
+      .catch((requestError) => {
+        if (!isMounted) return;
+        setAuthNotice({ type: "error", message: requestError.message });
+      })
+      .finally(() => {
+        if (isMounted) {
+          clearVerifyQueryParam();
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user]);
 
   useEffect(() => {
     if (user) {
@@ -1314,6 +1407,7 @@ export default function App() {
   function handleLogout() {
     clearSession();
     setUser(null);
+    setAuthNotice(null);
     setSpots([]);
     setReservations([]);
     setRecurringReservations([]);
@@ -1334,7 +1428,22 @@ export default function App() {
   if (!user) {
     return (
       <PhoneShell title={authMode === "register" ? "Create Account" : "Sign In"}>
-        <AuthScreen mode={authMode} onModeChange={setAuthMode} onAuthenticated={setUser} />
+        <AuthScreen
+          mode={authMode}
+          onModeChange={setAuthMode}
+          notice={authNotice}
+          onAuthenticated={(nextUser, notice = null) => {
+            if (notice) {
+              setAuthNotice(notice);
+            } else {
+              setAuthNotice(null);
+            }
+            if (nextUser) {
+              setUser(nextUser);
+            }
+          }}
+          onResendVerification={(email) => api.resendVerification({ email })}
+        />
       </PhoneShell>
     );
   }

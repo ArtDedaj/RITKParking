@@ -31,7 +31,7 @@ beforeEach(() => {
 });
 
 describe("auth", () => {
-  it("allows student self-registration with @auk.org emails", async () => {
+  it("allows student self-registration with @auk.org emails and requires verification", async () => {
     const response = await request(app).post("/auth/register").send({
       name: "Student Test",
       email: "student@auk.org",
@@ -40,6 +40,9 @@ describe("auth", () => {
 
     expect(response.status).toBe(201);
     expect(response.body.user.role).toBe("student");
+    expect(response.body.user.is_verified).toBe(0);
+    expect(response.body.message).toContain("verify");
+    expect(response.body.previewUrl).toContain("verify=");
   });
 
   it("blocks self-registration for non-@auk.org emails", async () => {
@@ -50,6 +53,59 @@ describe("auth", () => {
     });
 
     expect(response.status).toBe(400);
+  });
+
+  it("blocks login until the email is verified", async () => {
+    await request(app).post("/auth/register").send({
+      name: "Student Test",
+      email: "student@auk.org",
+      password: "Student123!"
+    });
+
+    const response = await request(app).post("/auth/login").send({
+      email: "student@auk.org",
+      password: "Student123!"
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe("EMAIL_NOT_VERIFIED");
+  });
+
+  it("verifies the email token and then allows login", async () => {
+    const registerResponse = await request(app).post("/auth/register").send({
+      name: "Student Test",
+      email: "student@auk.org",
+      password: "Student123!"
+    });
+    const token = new URL(registerResponse.body.previewUrl).searchParams.get("verify");
+
+    const verifyResponse = await request(app).post("/auth/verify-email").send({ token });
+    expect(verifyResponse.status).toBe(200);
+    expect(verifyResponse.body.user.is_verified).toBe(1);
+    expect(verifyResponse.body.token).toBeTruthy();
+
+    const loginResponse = await request(app).post("/auth/login").send({
+      email: "student@auk.org",
+      password: "Student123!"
+    });
+
+    expect(loginResponse.status).toBe(200);
+    expect(loginResponse.body.user.is_verified).toBe(true);
+  });
+
+  it("resends a verification link for unverified accounts", async () => {
+    await request(app).post("/auth/register").send({
+      name: "Student Test",
+      email: "student@auk.org",
+      password: "Student123!"
+    });
+
+    const response = await request(app).post("/auth/resend-verification").send({
+      email: "student@auk.org"
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.previewUrl).toContain("verify=");
   });
 });
 
