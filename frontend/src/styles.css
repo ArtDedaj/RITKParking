@@ -23,6 +23,7 @@
 body {
   margin: 0;
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 button,
@@ -38,12 +39,14 @@ button {
 
 #root {
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .app-shell,
 .splash-screen,
 .auth-screen {
   height: 100vh;
+  height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -54,7 +57,9 @@ button {
 .phone-frame {
   width: min(100%, 430px);
   height: min(860px, calc(100vh - 48px));
+  height: min(860px, calc(100dvh - 48px));
   max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
   background: linear-gradient(180deg, rgba(255,255,255,0.7), rgba(255,255,255,0.35));
   border: 1px solid rgba(255,255,255,0.7);
   border-radius: 42px;
@@ -115,6 +120,7 @@ button {
   flex: 1;
   overflow-y: auto;
   padding: 0 16px 16px;
+  padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   min-height: 0;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
@@ -130,6 +136,9 @@ button {
   flex-shrink: 0;
   background: rgba(247, 246, 241, 0.96);
   border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  position: relative;
+  z-index: 5;
 }
 
 .screen {
@@ -665,6 +674,7 @@ select {
   .phone-frame {
     width: 100%;
     height: 100vh;
+    height: 100dvh;
     max-height: none;
     border-radius: 0;
     padding: 0;

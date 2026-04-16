@@ -80,8 +80,8 @@ export function createDatabase(dbPath = config.dbPath) {
       student_max_active_reservations INTEGER NOT NULL DEFAULT 5,
       student_max_hours INTEGER NOT NULL DEFAULT 6,
       staff_max_hours INTEGER NOT NULL DEFAULT 12,
-      default_reservation_mode TEXT NOT NULL DEFAULT 'pending',
-      require_admin_approval INTEGER NOT NULL DEFAULT 1,
+      default_reservation_mode TEXT NOT NULL DEFAULT 'approved',
+      require_admin_approval INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -99,12 +99,22 @@ export function createDatabase(dbPath = config.dbPath) {
 
   ensureColumn(db, "users", "approval_mode_override", "approval_mode_override TEXT DEFAULT NULL");
   ensureColumn(db, "parking_spots", "lot_type", "lot_type TEXT NOT NULL DEFAULT 'general'");
-  ensureColumn(db, "app_settings", "default_reservation_mode", "default_reservation_mode TEXT NOT NULL DEFAULT 'pending'");
+  ensureColumn(db, "app_settings", "default_reservation_mode", "default_reservation_mode TEXT NOT NULL DEFAULT 'approved'");
 
   db.prepare(`
     INSERT INTO app_settings (id, student_max_active_reservations, student_max_hours, staff_max_hours, default_reservation_mode, require_admin_approval)
-    VALUES (1, 5, 6, 12, 'pending', 1)
+    VALUES (1, 5, 6, 12, 'approved', 0)
     ON CONFLICT(id) DO NOTHING
+  `).run();
+
+  db.prepare(`
+    UPDATE app_settings
+    SET default_reservation_mode = 'approved',
+        require_admin_approval = 0,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = 1
+      AND default_reservation_mode = 'pending'
+      AND require_admin_approval = 1
   `).run();
 
   db.prepare(`

@@ -122,6 +122,12 @@ describe("reservation rules", () => {
     createUser("Security", "security@auk.org", "security");
     createUser("Student", "student@auk.org", "student");
     const spotId = createSpot();
+    db.prepare(`
+      UPDATE app_settings
+      SET default_reservation_mode = 'pending',
+          require_admin_approval = 1
+      WHERE id = 1
+    `).run();
 
     const studentToken = await login("student@auk.org", "Password123!");
     const createResponse = await request(app)
@@ -146,6 +152,27 @@ describe("reservation rules", () => {
 
     expect(approvalResponse.status).toBe(200);
     expect(approvalResponse.body.status).toBe("approved");
+  });
+
+  it("lets students reserve freely from the general lot by default", async () => {
+    createUser("Student", "student@auk.org", "student");
+    createSpot("L-01", "left", "general");
+    const token = await login("student@auk.org", "Password123!");
+
+    const response = await request(app)
+      .post("/reservations")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        lotType: "general",
+        startClock: "08:00",
+        endClock: "10:00",
+        startTime: "2026-04-28T08:00:00.000Z",
+        endTime: "2026-04-28T10:00:00.000Z"
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body.status).toBe("approved");
+    expect(response.body.spot_code).toBe("L-01");
   });
 
   it("auto-assigns a spot from the requested lot", async () => {
