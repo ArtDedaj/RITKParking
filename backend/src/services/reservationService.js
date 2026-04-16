@@ -24,6 +24,15 @@ function getSpot(db, spotId) {
   return db.prepare("SELECT * FROM parking_spots WHERE id = ?").get(spotId);
 }
 
+function parseClockToMinutes(clockValue) {
+  if (!clockValue || !/^\d{2}:\d{2}$/.test(clockValue)) {
+    return null;
+  }
+
+  const [hours, minutes] = clockValue.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
 function getUserApprovalMode(db, actor, settings) {
   const userRecord = db.prepare("SELECT approval_mode_override FROM users WHERE id = ?").get(actor.id);
   if (actor.role === "security") {
@@ -107,7 +116,7 @@ function createAuditLog(db, actorUserId, action, entityType, entityId, details =
 }
 
 export function createReservation(db, actor, payload) {
-  const { spotId, startTime, endTime, lotType } = payload;
+  const { spotId, startTime, endTime, lotType, startClock, endClock } = payload;
   const settings = getSettings(db);
   const spot = spotId ? getSpot(db, spotId) : findAvailableSpot(db, actor, lotType || "general", startTime, endTime);
 
@@ -133,6 +142,23 @@ export function createReservation(db, actor, payload) {
 
   const durationHours =
     (new Date(endTime).getTime() - new Date(startTime).getTime()) / (1000 * 60 * 60);
+
+  if (actor.role === "student") {
+    const startMinutes = parseClockToMinutes(startClock);
+    const endMinutes = parseClockToMinutes(endClock);
+
+    if (startMinutes === null || endMinutes === null) {
+      throw httpError(400, "Students must choose valid start and end times.");
+    }
+
+    if (startMinutes < 8 * 60 || endMinutes > 20 * 60 || startMinutes >= endMinutes) {
+      throw httpError(400, "Students can only reserve between 08:00 and 20:00.");
+    }
+
+    if (startMinutes % 60 !== 0 || endMinutes % 60 !== 0) {
+      throw httpError(400, "Student reservations must use whole-hour time slots.");
+    }
+  }
 
   if (actor.role === "student" && durationHours > settings.student_max_hours) {
     throw httpError(400, `Students may only reserve up to ${settings.student_max_hours} hours.`);

@@ -84,6 +84,8 @@ describe("reservation rules", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({
         spotId,
+        startClock: "09:00",
+        endClock: "11:00",
         startTime: "2026-04-18T09:00:00.000Z",
         endTime: "2026-04-18T11:00:00.000Z"
       });
@@ -127,6 +129,8 @@ describe("reservation rules", () => {
       .set("Authorization", `Bearer ${studentToken}`)
       .send({
         spotId,
+        startClock: "08:00",
+        endClock: "10:00",
         startTime: "2026-04-20T08:00:00.000Z",
         endTime: "2026-04-20T10:00:00.000Z"
       });
@@ -174,11 +178,32 @@ describe("reservation rules", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({
         spotId,
+        startClock: "08:00",
+        endClock: "10:00",
         startTime: "2026-04-26T08:00:00.000Z",
         endTime: "2026-04-26T10:00:00.000Z"
       });
 
     expect(response.status).toBe(201);
     expect(response.body.status).toBe("approved");
+  });
+
+  it("limits student reservations to whole hours between 08:00 and 20:00", async () => {
+    createUser("Student", "student@auk.org", "student");
+    const spotId = createSpot("L-01", "left", "general");
+    const token = await login("student@auk.org", "Password123!");
+
+    const response = await request(app)
+      .post("/reservations")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        spotId,
+        startClock: "07:00",
+        endClock: "09:00",
+        startTime: "2026-04-26T07:00:00.000Z",
+        endTime: "2026-04-26T09:00:00.000Z"
+      });
+
+    expect(response.status).toBe(400);
   });
 });

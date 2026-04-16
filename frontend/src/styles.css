@@ -84,7 +84,7 @@ button {
 }
 
 .topbar {
-  padding: 20px 20px 10px;
+  padding: 18px 20px 8px;
 }
 
 .auth-screen .eyebrow {
@@ -491,6 +491,12 @@ select {
   background: rgba(12, 122, 90, 0.09);
 }
 
+.helper-text {
+  margin: -4px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
 .reservation-card,
 .user-row {
   display: flex;
@@ -628,6 +634,10 @@ select {
   padding: 10px 14px 18px;
   background: rgba(247, 246, 241, 0.96);
   border-top: 1px solid var(--line);
+  flex-shrink: 0;
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
 }
 
 .bottom-nav button {

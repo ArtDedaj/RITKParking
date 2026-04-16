@@ -99,6 +99,16 @@ function formatReservationMode(value) {
   return "Use default";
 }
 
+function getHourSlotOptions() {
+  return Array.from({ length: 13 }, (_, index) => {
+    const hour = 8 + index;
+    return {
+      label: String(hour),
+      value: `${String(hour).padStart(2, "0")}:00`
+    };
+  });
+}
+
 function getStoredSession() {
   const raw = localStorage.getItem("auk-user");
   return raw ? JSON.parse(raw) : null;
@@ -684,6 +694,7 @@ function SecurityMapScreen({ user, spots, onCreateReservation, onCreateRecurring
 }
 
 function LotReservationScreen({ user, settings, onCreateReservation, onCreateRecurring }) {
+  const studentHourOptions = useMemo(() => getHourSlotOptions(), []);
   const todayValue = useMemo(() => formatDateValue(new Date()), []);
   const currentWeekStart = useMemo(() => getMonday(new Date()), []);
   const initialWeekStart = useMemo(() => {
@@ -754,10 +765,19 @@ function LotReservationScreen({ user, settings, onCreateReservation, onCreateRec
     setError("");
 
     try {
-      const response = await onCreateReservation({
+      const payload = {
         lotType: user.role === "student" ? "general" : selectedLotType,
         startTime: new Date(`${selectedDate}T${form.startClock}`).toISOString(),
         endTime: new Date(`${selectedDate}T${form.endClock}`).toISOString()
+      };
+
+      if (user.role === "student") {
+        payload.startClock = form.startClock;
+        payload.endClock = form.endClock;
+      }
+
+      const response = await onCreateReservation({
+        ...payload
       });
       setMessage(`Reserved ${response.spot_code} as ${response.status}.`);
     } catch (requestError) {
@@ -792,6 +812,7 @@ function LotReservationScreen({ user, settings, onCreateReservation, onCreateRec
   }
 
   const canGoPrevious = weekStart.getTime() > currentWeekStart.getTime();
+  const studentEndOptions = studentHourOptions.filter((option) => option.value > form.startClock);
   const lotCards = user.role === "student"
     ? [{ key: "general", title: "General Parking Lot", description: "Students reserve from the general parking lot." }]
     : [
@@ -834,14 +855,49 @@ function LotReservationScreen({ user, settings, onCreateReservation, onCreateRec
       <div className="panel">
         <h3>{user.role === "student" ? "Reserve a parking space" : "Reserve from selected lot"}</h3>
         <form className="stack-form" onSubmit={submitReservation}>
-          <label>
-            Start time
-            <input type="time" step="1800" value={form.startClock} onChange={(event) => setForm({ ...form, startClock: event.target.value })} />
-          </label>
-          <label>
-            End time
-            <input type="time" step="1800" value={form.endClock} onChange={(event) => setForm({ ...form, endClock: event.target.value })} />
-          </label>
+          {user.role === "student" ? (
+            <>
+              <label>
+                Start hour
+                <select
+                  value={form.startClock}
+                  onChange={(event) => {
+                    const nextStart = event.target.value;
+                    const fallbackEnd = studentHourOptions.find((option) => option.value > nextStart)?.value || "20:00";
+                    setForm((current) => ({
+                      ...current,
+                      startClock: nextStart,
+                      endClock: current.endClock > nextStart ? current.endClock : fallbackEnd
+                    }));
+                  }}
+                >
+                  {studentHourOptions.slice(0, -1).map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                End hour
+                <select value={form.endClock} onChange={(event) => setForm({ ...form, endClock: event.target.value })}>
+                  {studentEndOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <p className="helper-text">Students can book whole-hour slots from 8 to 20.</p>
+            </>
+          ) : (
+            <>
+              <label>
+                Start time
+                <input type="time" step="1800" value={form.startClock} onChange={(event) => setForm({ ...form, startClock: event.target.value })} />
+              </label>
+              <label>
+                End time
+                <input type="time" step="1800" value={form.endClock} onChange={(event) => setForm({ ...form, endClock: event.target.value })} />
+              </label>
+            </>
+          )}
           <button className="primary-button" type="submit" disabled={loading}>
             {loading ? "Saving..." : "Reserve spot"}
           </button>
@@ -1285,7 +1341,7 @@ export default function App() {
   const tabs = navByRole[user.role];
 
   return (
-    <PhoneShell title={getTabLabel(user.role, activeTab)}>
+    <PhoneShell>
       {message ? <div className="banner success">{message}</div> : null}
       {error ? <div className="banner error">{error}</div> : null}
 
