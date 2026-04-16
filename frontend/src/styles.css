@@ -126,6 +126,12 @@ button {
   display: none;
 }
 
+.app-footer {
+  flex-shrink: 0;
+  background: rgba(247, 246, 241, 0.96);
+  border-top: 1px solid var(--line);
+}
+
 .screen {
   display: grid;
   gap: 14px;
@@ -632,12 +638,7 @@ select {
   display: grid;
   gap: 8px;
   padding: 10px 14px 18px;
-  background: rgba(247, 246, 241, 0.96);
-  border-top: 1px solid var(--line);
-  flex-shrink: 0;
-  position: sticky;
-  bottom: 0;
-  z-index: 4;
+  background: transparent;
 }
 
 .bottom-nav button {

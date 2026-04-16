@@ -202,7 +202,7 @@ function AuthScreen({ mode, onModeChange, onAuthenticated }) {
   );
 }
 
-function PhoneShell({ children, title }) {
+function PhoneShell({ children, title, footer }) {
   return (
     <div className="app-shell">
       <div className="phone-frame">
@@ -217,6 +217,7 @@ function PhoneShell({ children, title }) {
             </header>
           ) : null}
           <main className="content">{children}</main>
+          {footer ? <div className="app-footer">{footer}</div> : null}
         </div>
       </div>
     </div>
@@ -1339,9 +1340,18 @@ export default function App() {
   }
 
   const tabs = navByRole[user.role];
+  const footer = (
+    <nav className="bottom-nav" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
+      {tabs.map((tab) => (
+        <button key={tab} className={tab === activeTab ? "active" : ""} onClick={() => setActiveTab(tab)}>
+          {getTabLabel(user.role, tab)}
+        </button>
+      ))}
+    </nav>
+  );
 
   return (
-    <PhoneShell>
+    <PhoneShell footer={footer}>
       {message ? <div className="banner success">{message}</div> : null}
       {error ? <div className="banner error">{error}</div> : null}
 
@@ -1394,14 +1404,6 @@ export default function App() {
           spots={spots}
         />
       ) : null}
-
-      <nav className="bottom-nav" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
-        {tabs.map((tab) => (
-          <button key={tab} className={tab === activeTab ? "active" : ""} onClick={() => setActiveTab(tab)}>
-            {getTabLabel(user.role, tab)}
-          </button>
-        ))}
-      </nav>
     </PhoneShell>
   );
 }
