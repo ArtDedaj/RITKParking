@@ -36,11 +36,10 @@ router.post("/register", (req, res, next) => {
     `).run(name.trim(), normalizedEmail, hashPassword(password));
 
     const user = req.db.prepare("SELECT id, name, email, role, status, is_verified FROM users WHERE id = ?").get(result.lastInsertRowid);
-    const { verificationUrl } = await issueVerificationEmail(req.db, user);
+    await issueVerificationEmail(req.db, user);
     res.status(201).json({
       message: "Account created. Please verify your @auk.org email before signing in.",
-      user,
-      previewUrl: verificationUrl
+      user
     });
   })().catch((error) => {
     next(error);
@@ -119,10 +118,9 @@ router.post("/resend-verification", (req, res, next) => {
       return res.json({ message: "This email is already verified." });
     }
 
-    const { verificationUrl } = await issueVerificationEmail(req.db, user);
+    await issueVerificationEmail(req.db, user);
     res.json({
-      message: "A new verification email has been sent.",
-      previewUrl: verificationUrl
+      message: "A new verification email has been sent."
     });
   })().catch((error) => {
     next(error);

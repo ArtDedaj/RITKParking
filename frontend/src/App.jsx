@@ -147,7 +147,6 @@ function AuthScreen({ mode, onModeChange, onAuthenticated, notice, onResendVerif
   const [loading, setLoading] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const [resendMessage, setResendMessage] = useState("");
-  const [resendPreviewUrl, setResendPreviewUrl] = useState("");
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -161,8 +160,7 @@ function AuthScreen({ mode, onModeChange, onAuthenticated, notice, onResendVerif
         onAuthenticated(null, {
           type: "success",
           message: payload.message,
-          email: form.email,
-          previewUrl: payload.previewUrl
+          email: form.email
         });
         onModeChange("login");
         setForm({ name: "", email: form.email, password: "" });
@@ -186,12 +184,10 @@ function AuthScreen({ mode, onModeChange, onAuthenticated, notice, onResendVerif
     setResendLoading(true);
     setError("");
     setResendMessage("");
-    setResendPreviewUrl("");
 
     try {
       const payload = await onResendVerification(form.email);
-      setResendMessage(payload.previewUrl ? `${payload.message} Development link ready below.` : payload.message);
-      setResendPreviewUrl(payload.previewUrl || "");
+      setResendMessage(payload.message);
     } catch (requestError) {
       setError(requestError.message);
     } finally {
@@ -239,20 +235,6 @@ function AuthScreen({ mode, onModeChange, onAuthenticated, notice, onResendVerif
           </button>
         ) : null}
       </form>
-
-      {notice?.previewUrl ? (
-        <div className="panel note-panel">
-          <p>SMTP is not configured yet, so the verification link is shown here for testing.</p>
-          <a className="inline-link" href={notice.previewUrl}>Open verification link</a>
-        </div>
-      ) : null}
-
-      {resendPreviewUrl ? (
-        <div className="panel note-panel">
-          <p>Latest development verification link:</p>
-          <a className="inline-link" href={resendPreviewUrl}>Open verification link</a>
-        </div>
-      ) : null}
 
       <div className="panel note-panel">
         <p>{mode === "register" ? "Staff and security accounts are created by Security/Admin." : "Need a student account?"}</p>

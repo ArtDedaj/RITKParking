@@ -1,8 +1,10 @@
 import request from "supertest";
 import { beforeEach, describe, expect, it } from "vitest";
+import crypto from "crypto";
 import { createApp } from "../src/app.js";
 import { createDatabase } from "../src/db.js";
 import { hashPassword } from "../src/utils/password.js";
+import { ensureDemoUsers } from "../src/seed.js";
 
 let app;
 let db;
@@ -42,7 +44,6 @@ describe("auth", () => {
     expect(response.body.user.role).toBe("student");
     expect(response.body.user.is_verified).toBe(0);
     expect(response.body.message).toContain("verify");
-    expect(response.body.previewUrl).toContain("verify=");
   });
 
   it("blocks self-registration for non-@auk.org emails", async () => {
@@ -72,12 +73,19 @@ describe("auth", () => {
   });
 
   it("verifies the email token and then allows login", async () => {
-    const registerResponse = await request(app).post("/auth/register").send({
+    await request(app).post("/auth/register").send({
       name: "Student Test",
       email: "student@auk.org",
       password: "Student123!"
     });
-    const token = new URL(registerResponse.body.previewUrl).searchParams.get("verify");
+    const token = "known-verification-token";
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    db.prepare(`
+      UPDATE users
+      SET verification_token_hash = ?,
+          verification_expires_at = '2026-05-01T12:00:00.000Z'
+      WHERE email = 'student@auk.org'
+    `).run(tokenHash);
 
     const verifyResponse = await request(app).post("/auth/verify-email").send({ token });
     expect(verifyResponse.status).toBe(200);
@@ -105,7 +113,23 @@ describe("auth", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(response.body.previewUrl).toContain("verify=");
+    expect(response.body.message).toContain("sent");
+  });
+
+  it("keeps only student1 as the demo student account", async () => {
+    createUser("Student Two", "student2@auk.org", "student");
+    createUser("Student Three", "student3@auk.org", "student");
+
+    ensureDemoUsers(db);
+
+    const demoStudents = db.prepare(`
+      SELECT email
+      FROM users
+      WHERE email LIKE 'student%@auk.org'
+      ORDER BY email
+    `).all().map((row) => row.email);
+
+    expect(demoStudents).toEqual(["student1@auk.org"]);
   });
 });
 

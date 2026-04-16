@@ -8,13 +8,16 @@ export function ensureDemoUsers(targetDb) {
     VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, 'active')
   `);
 
+  targetDb.prepare(`
+    DELETE FROM users
+    WHERE email IN ('student2@auk.org', 'student3@auk.org')
+  `).run();
+
   [
     ["Security Admin", "security@auk.org", "Admin123!", "security"],
     ["Staff One", "staff1@auk.org", "Staff123!", "staff"],
     ["Staff Two", "staff2@auk.org", "Staff123!", "staff"],
-    ["Student One", "student1@auk.org", "Student123!", "student"],
-    ["Student Two", "student2@auk.org", "Student123!", "student"],
-    ["Student Three", "student3@auk.org", "Student123!", "student"]
+    ["Student One", "student1@auk.org", "Student123!", "student"]
   ].forEach(([name, email, password, role]) => {
     const existingUser = targetDb.prepare("SELECT id FROM users WHERE email = ?").get(email);
     if (!existingUser) {
@@ -65,6 +68,10 @@ function seedSpots(targetDb) {
 }
 
 function seedReservations(targetDb) {
+  const securityId = targetDb.prepare("SELECT id FROM users WHERE email = 'security@auk.org'").get()?.id;
+  const staff1Id = targetDb.prepare("SELECT id FROM users WHERE email = 'staff1@auk.org'").get()?.id;
+  const staff2Id = targetDb.prepare("SELECT id FROM users WHERE email = 'staff2@auk.org'").get()?.id;
+  const student1Id = targetDb.prepare("SELECT id FROM users WHERE email = 'student1@auk.org'").get()?.id;
   const insertReservation = targetDb.prepare(`
     INSERT INTO reservations (user_id, spot_id, start_time, end_time, status, approved_by, approval_note)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -74,13 +81,12 @@ function seedReservations(targetDb) {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  insertReservation.run(4, 1, "2026-04-18T07:30:00.000Z", "2026-04-18T10:30:00.000Z", "approved", 1, "Approved for demo.");
-  insertReservation.run(5, 4, "2026-04-18T08:00:00.000Z", "2026-04-18T12:00:00.000Z", "pending", null, "");
-  insertReservation.run(2, 22, "2026-04-18T06:30:00.000Z", "2026-04-18T15:30:00.000Z", "approved", 1, "Faculty recurring slot.");
-  insertReservation.run(6, 39, "2026-04-19T09:00:00.000Z", "2026-04-19T11:00:00.000Z", "rejected", 1, "Spot reserved for accessibility rotation.");
+  insertReservation.run(student1Id, 1, "2026-04-18T08:00:00.000Z", "2026-04-18T10:00:00.000Z", "approved", securityId, "Approved for demo.");
+  insertReservation.run(staff1Id, 22, "2026-04-18T06:30:00.000Z", "2026-04-18T15:30:00.000Z", "approved", securityId, "Faculty recurring slot.");
+  insertReservation.run(staff2Id, 39, "2026-04-19T09:00:00.000Z", "2026-04-19T11:00:00.000Z", "pending", null, "");
 
-  insertRecurring.run(2, 20, 1, "2026-04-21T07:00:00.000Z", "2026-04-21T15:00:00.000Z", "2026-04-20", "2026-08-31", "semester", "active");
-  insertRecurring.run(3, 38, 3, "2026-04-22T08:00:00.000Z", "2026-04-22T14:00:00.000Z", "2026-04-20", "2026-08-31", "weekly", "active");
+  insertRecurring.run(staff1Id, 20, 1, "2026-04-21T07:00:00.000Z", "2026-04-21T15:00:00.000Z", "2026-04-20", "2026-08-31", "semester", "active");
+  insertRecurring.run(staff2Id, 38, 3, "2026-04-22T08:00:00.000Z", "2026-04-22T14:00:00.000Z", "2026-04-20", "2026-08-31", "weekly", "active");
 }
 
 export function runSeed(targetDb = createDatabase()) {
