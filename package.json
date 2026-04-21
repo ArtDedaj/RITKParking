@@ -7,7 +7,7 @@
     "frontend"
   ],
   "scripts": {
-"start": "cross-env NODE_ENV=production npm run start --prefix backend",    "install:all": "npm install --workspaces",
+    "start": "npm run build --prefix frontend && npm run seed --prefix backend && cross-env NODE_ENV=production npm run start --prefix backend",
     "dev": "concurrently \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
     "build": "npm install --workspaces && npm run build --prefix frontend",
     "seed": "npm run seed --prefix backend",
