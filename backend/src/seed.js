@@ -90,10 +90,13 @@ function seedReservations(targetDb) {
 }
 
 export function runSeed(targetDb = createDatabase()) {
+  targetDb.exec("PRAGMA foreign_keys = OFF");
   resetTables(targetDb);
   seedUsers(targetDb);
   seedSpots(targetDb);
   seedReservations(targetDb);
+  targetDb.exec("PRAGMA foreign_keys = ON");
+
   console.log("Database seeded with demo users, 40 parking spots, and sample reservations.");
 }
 
