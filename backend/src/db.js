@@ -19,6 +19,9 @@ export function createDatabase(dbPath = config.dbPath) {
 
   const db = new Database(dbPath);
   db.pragma("foreign_keys = ON");
+  if (dbPath !== ":memory:") {
+    db.pragma("journal_mode = TRUNCATE");
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -108,7 +111,7 @@ export function createDatabase(dbPath = config.dbPath) {
   ensureColumn(db, "users", "verification_expires_at", "verification_expires_at TEXT DEFAULT NULL");
   ensureColumn(db, "users", "password_reset_token_hash", "password_reset_token_hash TEXT DEFAULT NULL");
   ensureColumn(db, "users", "password_reset_expires_at", "password_reset_expires_at TEXT DEFAULT NULL");
-  ensureColumn(db, "users", "verified_at", "verified_at TEXT DEFAULT CURRENT_TIMESTAMP");
+  ensureColumn(db, "users", "verified_at", "verified_at TEXT DEFAULT NULL");
   ensureColumn(db, "users", "approval_mode_override", "approval_mode_override TEXT DEFAULT NULL");
   ensureColumn(db, "parking_spots", "lot_type", "lot_type TEXT NOT NULL DEFAULT 'general'");
   ensureColumn(db, "app_settings", "default_reservation_mode", "default_reservation_mode TEXT NOT NULL DEFAULT 'approved'");
