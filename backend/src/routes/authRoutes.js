@@ -2,22 +2,21 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import { comparePassword, hashPassword } from "../utils/password.js";
 import { config } from "../config.js";
-import { issueVerificationEmail, verifyEmailToken } from "../services/emailVerificationService.js";
 import { authenticate } from "../middleware/auth.js";
-import { clearPasswordResetToken, consumePasswordResetToken, issuePasswordResetEmail } from "../services/passwordResetService.js";
 
 const router = express.Router();
 
 function issueToken(user) {
-  return jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, config.jwtSecret, {
-    expiresIn: "7d"
-  });
+  return jwt.sign(
+    { id: user.id, email: user.email, role: user.role, name: user.name },
+    config.jwtSecret,
+    { expiresIn: "7d" }
+  );
 }
 
-router.post("/register", (req, res, next) => {
-  (async () => {
+router.post("/register", async (req, res, next) => {
+  try {
     const { name, email, password } = req.body;
-
     if (!name || !email || !password) {
       return res.status(400).json({ message: "Name, email, and password are required." });
     }
@@ -27,32 +26,39 @@ router.post("/register", (req, res, next) => {
       return res.status(400).json({ message: "Students can only register with an @auk.org email address." });
     }
 
-    const existingUser = req.db.prepare("SELECT id FROM users WHERE email = ?").get(normalizedEmail);
-    if (existingUser) {
+    const [existing] = await req.db.execute("SELECT id FROM users WHERE email = ?", [normalizedEmail]);
+    if (existing.length) {
       return res.status(409).json({ message: "An account already exists for this email." });
     }
 
-    const result = req.db.prepare(`
-      INSERT INTO users (name, email, password_hash, role, is_verified, verification_token_hash, verification_expires_at, verified_at, status)
-      VALUES (?, ?, ?, 'student', 0, NULL, NULL, NULL, 'active')
-    `).run(name.trim(), normalizedEmail, hashPassword(password));
+    const [result] = await req.db.execute(
+      `INSERT INTO users (name, email, password_hash, role, is_verified, status)
+       VALUES (?, ?, ?, 'student', 1, 'active')`,
+      [name.trim(), normalizedEmail, hashPassword(password)]
+    );
 
-    const user = req.db.prepare("SELECT id, name, email, role, status, is_verified FROM users WHERE id = ?").get(result.lastInsertRowid);
-    await issueVerificationEmail(req.db, user);
+    const [rows] = await req.db.execute(
+      "SELECT id, name, email, role, status, is_verified FROM users WHERE id = ?",
+      [result.insertId]
+    );
+    const user = rows[0];
+
     res.status(201).json({
-      message: "Account created. Please verify your @auk.org email before signing in.",
+      message: "Account created.",
+      token: issueToken(user),
       user
     });
-  })().catch((error) => {
+  } catch (error) {
     next(error);
-  });
+  }
 });
 
-router.post("/login", (req, res, next) => {
+router.post("/login", async (req, res, next) => {
   try {
     const { email, password } = req.body;
     const normalizedEmail = String(email || "").trim().toLowerCase();
-    const user = req.db.prepare("SELECT * FROM users WHERE email = ?").get(normalizedEmail);
+    const [rows] = await req.db.execute("SELECT * FROM users WHERE email = ?", [normalizedEmail]);
+    const user = rows[0];
 
     if (!user || !comparePassword(password || "", user.password_hash)) {
       return res.status(401).json({ message: "Invalid email or password." });
@@ -73,126 +79,16 @@ router.post("/login", (req, res, next) => {
   }
 });
 
-router.get("/me", authenticate, (req, res) => {
-  const user = req.db.prepare(`
-    SELECT id, name, email, role, status, is_verified
-    FROM users
-    WHERE id = ?
-  `).get(req.user.id);
-
-  res.json(user);
-});
-
-router.post("/verify-email", (req, res, next) => {
+router.get("/me", authenticate, async (req, res, next) => {
   try {
-    const token = String(req.body?.token || "").trim();
-    if (!token) {
-      return res.status(400).json({ message: "Verification token is required." });
-    }
-
-    const user = verifyEmailToken(req.db, token);
-    res.json({
-      message: "Email verified successfully.",
-      token: issueToken(user),
-      user
-    });
+    const [rows] = await req.db.execute(
+      "SELECT id, name, email, role, status, is_verified FROM users WHERE id = ?",
+      [req.user.id]
+    );
+    res.json(rows[0] || null);
   } catch (error) {
     next(error);
   }
-});
-
-router.post("/resend-verification", (req, res, next) => {
-  (async () => {
-    const normalizedEmail = String(req.body?.email || "").trim().toLowerCase();
-    if (!normalizedEmail) {
-      return res.status(400).json({ message: "Email is required." });
-    }
-
-    const user = req.db.prepare(`
-      SELECT id, name, email, role, status, is_verified
-      FROM users
-      WHERE email = ?
-    `).get(normalizedEmail);
-
-    if (!user) {
-      return res.status(404).json({ message: "No account exists for that email." });
-    }
-
-    if (user.is_verified) {
-      return res.json({ message: "This email is already verified." });
-    }
-
-    await issueVerificationEmail(req.db, user);
-    res.json({
-      message: "A new verification email has been sent."
-    });
-  })().catch((error) => {
-    next(error);
-  });
-});
-
-router.post("/forgot-password", (req, res, next) => {
-  (async () => {
-    const normalizedEmail = String(req.body?.email || "").trim().toLowerCase();
-    if (!normalizedEmail) {
-      return res.status(400).json({ message: "Email is required." });
-    }
-
-    const user = req.db.prepare(`
-      SELECT id, name, email
-      FROM users
-      WHERE email = ?
-    `).get(normalizedEmail);
-
-    if (user) {
-      await issuePasswordResetEmail(req.db, user);
-    }
-
-    res.json({ message: "If an account exists for that email, a reset link has been sent." });
-  })().catch((error) => {
-    next(error);
-  });
-});
-
-router.post("/reset-password", (req, res, next) => {
-  try {
-    const token = String(req.body?.token || "").trim();
-    const password = String(req.body?.password || "");
-
-    if (!token || !password) {
-      return res.status(400).json({ message: "Reset token and new password are required." });
-    }
-
-    if (password.length < 8) {
-      return res.status(400).json({ message: "Password must be at least 8 characters long." });
-    }
-
-    const user = consumePasswordResetToken(req.db, token);
-    req.db.prepare(`
-      UPDATE users
-      SET password_hash = ?
-      WHERE id = ?
-    `).run(hashPassword(password), user.id);
-    clearPasswordResetToken(req.db, user.id);
-
-    const safeUser = req.db.prepare(`
-      SELECT id, name, email, role, status, is_verified
-      FROM users
-      WHERE id = ?
-    `).get(user.id);
-
-    res.json({
-      message: "Password updated successfully.",
-      token: issueToken(safeUser),
-      user: safeUser
-    });
-  } catch (error) {
-    next(error);
-  }
-});
-
-router.post("/google", (req, res) => {
-  res.status(501).json({ message: "Google login is not enabled in this demo build." });
 });
 
 export default router;

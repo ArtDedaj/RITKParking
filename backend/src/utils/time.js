@@ -1,9 +1,9 @@
-export function toMinuteValue(dateLike) {
+export function toMs(dateLike) {
   return new Date(dateLike).getTime();
 }
 
 export function hasOverlap(startA, endA, startB, endB) {
-  return toMinuteValue(startA) < toMinuteValue(endB) && toMinuteValue(startB) < toMinuteValue(endA);
+  return toMs(startA) < toMs(endB) && toMs(startB) < toMs(endA);
 }
 
 export function isHalfHourIncrement(dateLike) {
@@ -12,5 +12,5 @@ export function isHalfHourIncrement(dateLike) {
 }
 
 export function isFutureRange(startTime, endTime) {
-  return new Date(startTime).getTime() < new Date(endTime).getTime();
+  return toMs(startTime) < toMs(endTime);
 }

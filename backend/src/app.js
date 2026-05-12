@@ -10,11 +10,13 @@ import adminRoutes from "./routes/adminRoutes.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { ensureDemoUsers } from "./seed.js";
 
-export function createApp(options = {}) {
-  const db = options.db || createDatabase(options.dbPath);
+export async function createApp(options = {}) {
+  const db = options.db || await createDatabase(options.dbConfig);
+
   if (options.bootstrapDemoUsers !== false) {
-    ensureDemoUsers(db);
+    await ensureDemoUsers(db);
   }
+
   const app = express();
 
   app.use(cors({ origin: config.frontendUrl, credentials: true }));
@@ -24,10 +26,7 @@ export function createApp(options = {}) {
     next();
   });
 
-  app.get("/health", (req, res) => {
-    res.json({ status: "ok" });
-  });
-
+  app.get("/health", (req, res) => res.json({ status: "ok" }));
   app.use("/auth", authRoutes);
   app.use("/users", userRoutes);
   app.use("/spots", spotRoutes);

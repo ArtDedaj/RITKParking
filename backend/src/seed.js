@@ -2,103 +2,93 @@ import { fileURLToPath } from "url";
 import { createDatabase } from "./db.js";
 import { hashPassword } from "./utils/password.js";
 
-export function ensureDemoUsers(targetDb) {
-  const insert = targetDb.prepare(`
-    INSERT INTO users (name, email, password_hash, role, is_verified, verified_at, status)
-    VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, 'active')
-  `);
+export async function ensureDemoUsers(db) {
+  const demoAccounts = [
+    ["Security Admin", "security@auk.org", "Admin123!",   "security"],
+    ["Staff One",      "staff1@auk.org",   "Staff123!",   "staff"],
+    ["Staff Two",      "staff2@auk.org",   "Staff123!",   "staff"],
+    ["Student One",    "student1@auk.org", "Student123!", "student"]
+  ];
 
-  targetDb.prepare(`
-    DELETE FROM users
-    WHERE email IN ('student2@auk.org', 'student3@auk.org')
-  `).run();
-
-  [
-    ["Security Admin", "security@auk.org", "Admin123!", "security"],
-    ["Staff One", "staff1@auk.org", "Staff123!", "staff"],
-    ["Staff Two", "staff2@auk.org", "Staff123!", "staff"],
-    ["Student One", "student1@auk.org", "Student123!", "student"]
-  ].forEach(([name, email, password, role]) => {
-    const existingUser = targetDb.prepare("SELECT id FROM users WHERE email = ?").get(email);
-    if (!existingUser) {
-      insert.run(name, email, hashPassword(password), role);
-    } else {
-      targetDb.prepare(`
-        UPDATE users
-        SET is_verified = 1,
-            verification_token_hash = NULL,
-            verification_expires_at = NULL,
-            verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP)
-        WHERE email = ?
-      `).run(email);
+  for (const [name, email, password, role] of demoAccounts) {
+    const [existing] = await db.execute("SELECT id FROM users WHERE email = ?", [email]);
+    if (!existing.length) {
+      await db.execute(
+        `INSERT INTO users (name, email, password_hash, role, is_verified, status)
+         VALUES (?, ?, ?, ?, 1, 'active')`,
+        [name, email, hashPassword(password), role]
+      );
     }
-  });
-}
-
-function resetTables(targetDb) {
-  targetDb.exec(`
-    DELETE FROM audit_logs;
-    DELETE FROM recurring_reservations;
-    DELETE FROM reservations;
-    DELETE FROM parking_spots;
-    DELETE FROM users;
-  `);
-}
-
-function seedUsers(targetDb) {
-  ensureDemoUsers(targetDb);
-}
-
-function seedSpots(targetDb) {
-  const insert = targetDb.prepare(`
-    INSERT INTO parking_spots (code, side, type, lot_type, is_available, notes)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-
-  for (let index = 1; index <= 20; index += 1) {
-    insert.run(`L-${String(index).padStart(2, "0")}`, "left", "standard", "general", 1, "");
   }
+}
 
-  for (let index = 1; index <= 18; index += 1) {
-    insert.run(`R-${String(index).padStart(2, "0")}`, "right", "standard", "staff", 1, "");
+async function resetTables(db) {
+  await db.query("SET FOREIGN_KEY_CHECKS = 0");
+  await db.query("TRUNCATE TABLE reservations");
+  await db.query("TRUNCATE TABLE parking_spots");
+  await db.query("TRUNCATE TABLE users");
+  await db.query("SET FOREIGN_KEY_CHECKS = 1");
+}
+
+async function seedSpots(db) {
+  const insert = async (code, side, type, lotType, isAvailable, notes) =>
+    db.execute(
+      `INSERT INTO parking_spots (code, side, type, lot_type, is_available, notes)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [code, side, type, lotType, isAvailable, notes]
+    );
+
+  for (let i = 1; i <= 20; i += 1) {
+    await insert(`L-${String(i).padStart(2, "0")}`, "left",  "standard", "general", 1, "");
   }
-
-  insert.run("E-01", "entrance", "accessible", "general", 1, "Accessible parking near the entrance.");
-  insert.run("E-02", "entrance", "vip", "staff", 0, "Temporarily unavailable for maintenance.");
+  for (let i = 1; i <= 18; i += 1) {
+    await insert(`R-${String(i).padStart(2, "0")}`, "right", "standard", "staff",   1, "");
+  }
+  await insert("E-01", "entrance", "accessible", "general", 1, "Accessible parking near the entrance.");
+  await insert("E-02", "entrance", "vip",        "staff",   0, "Temporarily unavailable for maintenance.");
 }
 
-function seedReservations(targetDb) {
-  const securityId = targetDb.prepare("SELECT id FROM users WHERE email = 'security@auk.org'").get()?.id;
-  const staff1Id = targetDb.prepare("SELECT id FROM users WHERE email = 'staff1@auk.org'").get()?.id;
-  const staff2Id = targetDb.prepare("SELECT id FROM users WHERE email = 'staff2@auk.org'").get()?.id;
-  const student1Id = targetDb.prepare("SELECT id FROM users WHERE email = 'student1@auk.org'").get()?.id;
-  const insertReservation = targetDb.prepare(`
-    INSERT INTO reservations (user_id, spot_id, start_time, end_time, status, approved_by, approval_note)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-  const insertRecurring = targetDb.prepare(`
-    INSERT INTO recurring_reservations (user_id, spot_id, day_of_week, start_time, end_time, semester_start, semester_end, recurrence_type, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
+async function seedReservations(db) {
+  const getId = async (email) => {
+    const [rows] = await db.execute("SELECT id FROM users WHERE email = ?", [email]);
+    return rows[0]?.id;
+  };
+  const getSpotId = async (code) => {
+    const [rows] = await db.execute("SELECT id FROM parking_spots WHERE code = ?", [code]);
+    return rows[0]?.id;
+  };
 
-  insertReservation.run(student1Id, 1, "2026-04-18T08:00:00.000Z", "2026-04-18T10:00:00.000Z", "approved", securityId, "Approved for demo.");
-  insertReservation.run(staff1Id, 22, "2026-04-18T06:30:00.000Z", "2026-04-18T15:30:00.000Z", "approved", securityId, "Faculty recurring slot.");
-  insertReservation.run(staff2Id, 39, "2026-04-19T09:00:00.000Z", "2026-04-19T11:00:00.000Z", "pending", null, "");
+  const securityId = await getId("security@auk.org");
+  const staff1Id   = await getId("staff1@auk.org");
+  const student1Id = await getId("student1@auk.org");
+  const spot1Id    = await getSpotId("L-01");
+  const spot22Id   = await getSpotId("R-02");
 
-  insertRecurring.run(staff1Id, 20, 1, "2026-04-21T07:00:00.000Z", "2026-04-21T15:00:00.000Z", "2026-04-20", "2026-08-31", "semester", "active");
-  insertRecurring.run(staff2Id, 38, 3, "2026-04-22T08:00:00.000Z", "2026-04-22T14:00:00.000Z", "2026-04-20", "2026-08-31", "weekly", "active");
+  const insert = (userId, spotId, start, end, status, approvedBy, note) =>
+    db.execute(
+      `INSERT INTO reservations (user_id, spot_id, start_time, end_time, status, approved_by, approval_note)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [userId, spotId, start, end, status, approvedBy, note]
+    );
+
+  await insert(student1Id, spot1Id,  "2026-04-25T08:00:00.000Z", "2026-04-25T10:00:00.000Z", "approved", securityId, "Approved for demo.");
+  await insert(staff1Id,   spot22Id, "2026-04-25T06:30:00.000Z", "2026-04-25T15:30:00.000Z", "approved", securityId, "Faculty slot.");
 }
 
-export function runSeed(targetDb = createDatabase()) {
-  resetTables(targetDb);
-  seedUsers(targetDb);
-  seedSpots(targetDb);
-  seedReservations(targetDb);
-  console.log("Database seeded with demo users, 40 parking spots, and sample reservations.");
+export async function runSeed() {
+  const db = await createDatabase();
+  await resetTables(db);
+  await ensureDemoUsers(db);
+  await seedSpots(db);
+  await seedReservations(db);
+  console.log("Tutorial database seeded: demo users, 40 spots, sample reservations.");
+  await db.end();
 }
 
 const currentFilePath = fileURLToPath(import.meta.url);
-
 if (process.argv[1] === currentFilePath) {
-  runSeed();
+  runSeed().catch((error) => {
+    console.error("Seed failed:", error);
+    process.exit(1);
+  });
 }
