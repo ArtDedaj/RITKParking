@@ -20,6 +20,7 @@ router.get("/", authenticate, authorize("security"), (req, res) => {
       users.status,
       users.is_verified,
       users.license_plates,
+      users.phone_number,
       users.profile_note,
       users.approval_mode_override,
       users.created_at,
@@ -67,7 +68,7 @@ router.post("/", authenticate, authorize("security"), (req, res) => {
   `).run(role);
 
   const user = req.db.prepare(`
-    SELECT id, name, email, role, status, is_verified, license_plates, profile_note
+    SELECT id, name, email, role, status, is_verified, license_plates, phone_number, profile_note
     FROM users
     WHERE id = ?
   `).get(result.lastInsertRowid);
@@ -78,7 +79,7 @@ router.patch("/:id/status", authenticate, authorize("security"), (req, res) => {
   const { status } = req.body;
   req.db.prepare("UPDATE users SET status = ? WHERE id = ?").run(status || "active", req.params.id);
   const user = req.db.prepare(`
-    SELECT id, name, email, role, status, is_verified, license_plates, profile_note, approval_mode_override
+    SELECT id, name, email, role, status, is_verified, license_plates, phone_number, profile_note, approval_mode_override
     FROM users
     WHERE id = ?
   `).get(req.params.id);
@@ -88,7 +89,7 @@ router.patch("/:id/status", authenticate, authorize("security"), (req, res) => {
 router.patch("/:id/ban", authenticate, authorize("security"), (req, res) => {
   req.db.prepare("UPDATE users SET status = 'banned' WHERE id = ?").run(req.params.id);
   const user = req.db.prepare(`
-    SELECT id, name, email, role, status, is_verified, license_plates, profile_note, approval_mode_override
+    SELECT id, name, email, role, status, is_verified, license_plates, phone_number, profile_note, approval_mode_override
     FROM users
     WHERE id = ?
   `).get(req.params.id);
@@ -98,7 +99,7 @@ router.patch("/:id/ban", authenticate, authorize("security"), (req, res) => {
 router.patch("/:id/unban", authenticate, authorize("security"), (req, res) => {
   req.db.prepare("UPDATE users SET status = 'active' WHERE id = ?").run(req.params.id);
   const user = req.db.prepare(`
-    SELECT id, name, email, role, status, is_verified, license_plates, profile_note, approval_mode_override
+    SELECT id, name, email, role, status, is_verified, license_plates, phone_number, profile_note, approval_mode_override
     FROM users
     WHERE id = ?
   `).get(req.params.id);
@@ -119,7 +120,7 @@ router.patch("/:id/role", authenticate, authorize("security"), (req, res) => {
   `).run(role);
 
   const user = req.db.prepare(`
-    SELECT id, name, email, role, status, is_verified, license_plates, profile_note, approval_mode_override
+    SELECT id, name, email, role, status, is_verified, license_plates, phone_number, profile_note, approval_mode_override
     FROM users
     WHERE id = ?
   `).get(req.params.id);
@@ -136,7 +137,7 @@ router.patch("/:id/approval-mode", authenticate, authorize("security"), (req, re
 
   req.db.prepare("UPDATE users SET approval_mode_override = ? WHERE id = ?").run(normalizedValue, req.params.id);
   const user = req.db.prepare(`
-    SELECT id, name, email, role, status, is_verified, license_plates, profile_note, approval_mode_override
+    SELECT id, name, email, role, status, is_verified, license_plates, phone_number, profile_note, approval_mode_override
     FROM users
     WHERE id = ?
   `).get(req.params.id);

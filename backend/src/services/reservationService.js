@@ -1,5 +1,6 @@
 import { hasOverlap, isFutureRange, isHalfHourIncrement } from "../utils/time.js";
 import { isAdminRole, isStaffLikeRole, isStudentRole, isStudentRoleLevel1 } from "../utils/roles.js";
+import { sendMail } from "./mailService.js";
 
 function httpError(status, message) {
   const error = new Error(message);
@@ -188,6 +189,12 @@ function createAuditLog(db, actorUserId, action, entityType, entityId, details =
   `).run(actorUserId || null, action, entityType, entityId || null, details);
 }
 
+function notifyUserByEmail(db, userId, subject, text) {
+  const user = db.prepare("SELECT email FROM users WHERE id = ?").get(userId);
+  if (!user?.email) return;
+  sendMail({ to: user.email, subject, text }).catch(() => {});
+}
+
 function ensureReservationAllowed(actor, userRecord) {
   if (userRecord?.status === "banned" && !isAdminRole(actor.role)) {
     throw httpError(403, "Your account is currently banned from making reservations.");
@@ -299,6 +306,12 @@ export function createReservation(db, actor, payload) {
   `).run(actor.id, spot.id, startTime, endTime, status);
 
   createAuditLog(db, actor.id, "reservation_created", "reservation", result.lastInsertRowid, JSON.stringify(payload));
+  notifyUserByEmail(
+    db,
+    actor.id,
+    "AUK Parking: Reservation created",
+    `Your reservation for spot ${spot.code} on ${startTime} to ${endTime} was created with status: ${status}.`
+  );
 
   return db.prepare(`
     SELECT reservations.*, parking_spots.code AS spot_code, parking_spots.lot_type
@@ -385,6 +398,12 @@ export function updateReservationStatus(db, actor, reservationId, status, approv
   `).run(status, actor.id, approvalNote, reservationId);
 
   createAuditLog(db, actor.id, "reservation_status_updated", "reservation", reservationId, status);
+  notifyUserByEmail(
+    db,
+    reservation.user_id,
+    "AUK Parking: Reservation status updated",
+    `Your reservation #${reservationId} is now ${status}. ${approvalNote ? `Note: ${approvalNote}` : ""}`.trim()
+  );
 
   return db.prepare("SELECT * FROM reservations WHERE id = ?").get(reservationId);
 }
@@ -401,6 +420,12 @@ export function cancelReservation(db, actor, reservationId) {
 
   db.prepare("UPDATE reservations SET status = 'cancelled' WHERE id = ?").run(reservationId);
   createAuditLog(db, actor.id, "reservation_cancelled", "reservation", reservationId);
+  notifyUserByEmail(
+    db,
+    reservation.user_id,
+    "AUK Parking: Reservation cancelled",
+    `Reservation #${reservationId} has been cancelled and the parking spot is now free for reuse.`
+  );
 
   return db.prepare("SELECT * FROM reservations WHERE id = ?").get(reservationId);
 }

@@ -404,9 +404,10 @@ function HomeScreen({ user, stats, settings, onQuickTab }) {
 }
 
 function ParkingMap({ spots, selectedSpotId, onSelect }) {
-  const left = spots.filter((spot) => spot.side === "left");
-  const right = spots.filter((spot) => spot.side === "right");
-  const extras = spots.filter((spot) => spot.side === "entrance");
+  const left = spots.filter((spot) => spot.side === "left" || String(spot.code || "").startsWith("L-"));
+  const right = spots.filter((spot) => spot.side === "right" || String(spot.code || "").startsWith("R-"));
+  const extras = spots.filter((spot) => spot.side === "entrance" || String(spot.code || "").startsWith("E-"));
+  const showFallback = !left.length && !right.length && spots.length > 0;
 
   return (
     <div className="map-shell">
@@ -439,6 +440,17 @@ function ParkingMap({ spots, selectedSpotId, onSelect }) {
           </button>
         ))}
       </div>
+
+      {showFallback ? (
+        <div className="fallback-spot-grid">
+          {spots.map((spot) => (
+            <button key={spot.id} className={`spot-card spot-${spotVisualStatus(spot)} ${selectedSpotId === spot.id ? "selected" : ""}`} onClick={() => onSelect(spot)}>
+              <span>{spot.code}</span>
+              <small>{spotVisualStatus(spot)}</small>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1190,6 +1202,7 @@ function AdminScreen({
   users,
   approvals,
   reports,
+  reservations,
   roleRules,
   onApprove,
   onReject,
@@ -1202,6 +1215,7 @@ function AdminScreen({
   onUpdateRoleRule
 }) {
   const [activeSection, setActiveSection] = useState("users");
+  const [showBookingsList, setShowBookingsList] = useState(false);
   const [usersMode, setUsersMode] = useState("search");
   const [userForm, setUserForm] = useState({ name: "", email: "", password: "", role: "staff" });
   const [spotForm, setSpotForm] = useState({ code: "", side: "left", type: "standard", lotType: "general", notes: "" });
@@ -1238,6 +1252,7 @@ function AdminScreen({
         <div className="section-tabs">
           {[
             { key: "parkings", label: "Parkings" },
+            { key: "bookings", label: "Bookings" },
             { key: "users", label: "Users" },
             { key: "reports", label: "Reports" },
             { key: "rules", label: "Scheduling Rules" }
@@ -1333,6 +1348,7 @@ function AdminScreen({
                 <strong>{account.name}</strong>
                 <p>{account.email}</p>
                 <p>{account.role} | {account.license_plates || "No license plate saved"}</p>
+                <p>{account.phone_number || "No phone number saved"}</p>
                 {account.profile_note ? <p>{account.profile_note}</p> : null}
               </div>
               <div className="user-control-stack">
@@ -1393,6 +1409,31 @@ function AdminScreen({
         </form>
           </>
         )}
+        </div>
+      ) : null}
+
+      {activeSection === "bookings" ? (
+        <div className="panel">
+          <div className="section-heading">
+            <h3>Bookings</h3>
+            <button className="secondary-button" type="button" onClick={() => setShowBookingsList((value) => !value)}>
+              {showBookingsList ? "Hide booking list" : "Show booking list"}
+            </button>
+          </div>
+          <p>All reservations in compact view for high-volume days.</p>
+          {showBookingsList ? (
+            <div className="compact-bookings-list">
+              {reservations.map((reservation) => (
+                <div className="compact-booking-row" key={reservation.id}>
+                  <span>#{reservation.id}</span>
+                  <span>{reservation.spot_code || "N/A"}</span>
+                  <span>{reservation.user_name || "N/A"}</span>
+                  <span>{reservation.status}</span>
+                </div>
+              ))}
+              {!reservations.length ? <p className="empty-state">No bookings found.</p> : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -1526,12 +1567,14 @@ function AdminScreen({
 function ProfileScreen({ user, settings, onResendVerification, onSaveProfile, onLogout }) {
   const [form, setForm] = useState({
     licensePlates: user.license_plates || "",
+    phoneNumber: user.phone_number || "",
     profileNote: user.profile_note || ""
   });
 
   useEffect(() => {
     setForm({
       licensePlates: user.license_plates || "",
+      phoneNumber: user.phone_number || "",
       profileNote: user.profile_note || ""
     });
   }, [user]);
@@ -1572,6 +1615,14 @@ function ProfileScreen({ user, settings, onResendVerification, onSaveProfile, on
             />
           </label>
           <p className="helper-text">Up to 5 plates, max 10 characters each. Separate multiple plates with commas.</p>
+          <label>
+            Phone number
+            <input
+              value={form.phoneNumber}
+              onChange={(event) => setForm({ ...form, phoneNumber: event.target.value })}
+              placeholder="+355 69 123 4567"
+            />
+          </label>
           <label>
             {isStudentRole(user.role) ? "Profile note" : "Description / note"}
             <input
@@ -1934,6 +1985,7 @@ export default function App() {
           users={users}
           approvals={approvals}
           reports={spotReports}
+          reservations={reservations}
           roleRules={roleRules}
           onApprove={handleApprove}
           onReject={handleReject}
