@@ -31,6 +31,22 @@ function normalizeLicensePlates(rawValue) {
   return entries.join(", ");
 }
 
+function normalizePhoneNumber(rawValue) {
+  const value = String(rawValue || "").trim();
+  if (!value) return "";
+  if (value.length > 20) {
+    const error = new Error("Phone number must be 20 characters or fewer.");
+    error.status = 400;
+    throw error;
+  }
+  if (!/^[0-9+\-\s()]+$/.test(value)) {
+    const error = new Error("Phone number contains invalid characters.");
+    error.status = 400;
+    throw error;
+  }
+  return value;
+}
+
 function issueToken(user) {
   return jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, config.jwtSecret, {
     expiresIn: "7d"
@@ -89,6 +105,7 @@ router.post("/login", (req, res, next) => {
       status: user.status,
       is_verified: Boolean(user.is_verified),
       license_plates: user.license_plates || "",
+      phone_number: user.phone_number || "",
       profile_note: user.profile_note || ""
     };
 
@@ -108,6 +125,7 @@ router.get("/me", authenticate, (req, res) => {
       users.status,
       users.is_verified,
       users.license_plates,
+      users.phone_number,
       users.profile_note,
       COALESCE(role_scheduling_rules.max_days_ahead, 10) AS role_max_days_ahead,
       COALESCE(role_scheduling_rules.role_description, '') AS role_description
@@ -121,8 +139,10 @@ router.get("/me", authenticate, (req, res) => {
 
 router.patch("/me", authenticate, (req, res) => {
   let licensePlates = "";
+  let phoneNumber = "";
   try {
     licensePlates = normalizeLicensePlates(req.body?.licensePlates || "");
+    phoneNumber = normalizePhoneNumber(req.body?.phoneNumber || "");
   } catch (error) {
     return res.status(error.status || 400).json({ message: error.message });
   }
@@ -131,9 +151,10 @@ router.patch("/me", authenticate, (req, res) => {
   req.db.prepare(`
     UPDATE users
     SET license_plates = ?,
+        phone_number = ?,
         profile_note = ?
     WHERE id = ?
-  `).run(licensePlates, profileNote, req.user.id);
+  `).run(licensePlates, phoneNumber, profileNote, req.user.id);
 
   const user = req.db.prepare(`
     SELECT
@@ -144,6 +165,7 @@ router.patch("/me", authenticate, (req, res) => {
       users.status,
       users.is_verified,
       users.license_plates,
+      users.phone_number,
       users.profile_note,
       COALESCE(role_scheduling_rules.max_days_ahead, 10) AS role_max_days_ahead,
       COALESCE(role_scheduling_rules.role_description, '') AS role_description
@@ -256,6 +278,7 @@ router.post("/reset-password", (req, res, next) => {
         users.status,
         users.is_verified,
         users.license_plates,
+        users.phone_number,
         users.profile_note,
         COALESCE(role_scheduling_rules.max_days_ahead, 10) AS role_max_days_ahead,
         COALESCE(role_scheduling_rules.role_description, '') AS role_description

@@ -35,6 +35,7 @@ function migrateUsersRoleConstraint(db) {
         password_hash TEXT NOT NULL,
         role TEXT NOT NULL,
         license_plates TEXT NOT NULL DEFAULT '',
+        phone_number TEXT NOT NULL DEFAULT '',
         profile_note TEXT NOT NULL DEFAULT '',
         is_verified INTEGER NOT NULL DEFAULT 1,
         verification_token_hash TEXT DEFAULT NULL,
@@ -49,13 +50,13 @@ function migrateUsersRoleConstraint(db) {
     `);
     db.exec(`
       INSERT INTO users (
-        id, name, email, password_hash, role, license_plates, profile_note,
+        id, name, email, password_hash, role, license_plates, phone_number, profile_note,
         is_verified, verification_token_hash, verification_expires_at,
         password_reset_token_hash, password_reset_expires_at,
         verified_at, approval_mode_override, status, created_at
       )
       SELECT
-        id, name, email, password_hash, role, COALESCE(license_plates, ''), COALESCE(profile_note, ''),
+        id, name, email, password_hash, role, COALESCE(license_plates, ''), COALESCE(phone_number, ''), COALESCE(profile_note, ''),
         is_verified, verification_token_hash, verification_expires_at,
         password_reset_token_hash, password_reset_expires_at,
         verified_at, approval_mode_override, status, created_at
@@ -289,6 +290,7 @@ export function createDatabase(dbPath = config.dbPath) {
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL,
       license_plates TEXT NOT NULL DEFAULT '',
+      phone_number TEXT NOT NULL DEFAULT '',
       profile_note TEXT NOT NULL DEFAULT '',
       is_verified INTEGER NOT NULL DEFAULT 1,
       verification_token_hash TEXT DEFAULT NULL,
@@ -392,6 +394,7 @@ export function createDatabase(dbPath = config.dbPath) {
   repairBrokenLegacyForeignKeys(db);
 
   ensureColumn(db, "users", "license_plates", "license_plates TEXT NOT NULL DEFAULT ''");
+  ensureColumn(db, "users", "phone_number", "phone_number TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "users", "profile_note", "profile_note TEXT NOT NULL DEFAULT ''");
   ensureColumn(db, "users", "is_verified", "is_verified INTEGER NOT NULL DEFAULT 1");
   ensureColumn(db, "users", "verification_token_hash", "verification_token_hash TEXT DEFAULT NULL");
