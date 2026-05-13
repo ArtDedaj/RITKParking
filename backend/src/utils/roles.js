@@ -18,7 +18,7 @@ export function isStudentRole(role) {
 
 export function isStudentRoleLevel1(role) {
   const normalized = normalizeRole(role);
-  return normalized === "student role 1" || normalized === "student";
+  return normalized === "student role 1";
 }
 
 export function roleSortWeight(role) {
@@ -41,7 +41,7 @@ export function defaultRoleRules(roleName) {
     };
   }
 
-  if (role === "student role 1" || role === "student") {
+  if (role === "student role 1") {
     return {
       maxDaysAhead: 10,
       maxDailyActiveReservations: 2,

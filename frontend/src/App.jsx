@@ -1215,7 +1215,7 @@ function AdminScreen({
   onUpdateUserRole,
   onUpdateRoleRule
 }) {
-  const [activeSection, setActiveSection] = useState("bookings");
+  const [activeSection, setActiveSection] = useState("parkings");
   const [showBookingsList, setShowBookingsList] = useState(false);
   const [bookingsMode, setBookingsMode] = useState("mine");
   const [bookingsDate, setBookingsDate] = useState(formatDateValue(new Date()));
@@ -1254,11 +1254,10 @@ function AdminScreen({
       <div className="panel">
         <div className="section-tabs">
           {[
-            { key: "bookings", label: "My Bookings" },
             { key: "parkings", label: "Parkings" },
             { key: "users", label: "Users" },
             { key: "reports", label: "Reports" },
-            { key: "rules", label: "Scheduling Rules" }
+            { key: "rules", label: "Rules" }
           ].map((section) => (
             <button
               key={section.key}
