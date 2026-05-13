@@ -2,6 +2,12 @@ import { fileURLToPath } from "url";
 import { createDatabase } from "./db.js";
 import { hashPassword } from "./utils/password.js";
 
+function mustGet(db, query, param, label) {
+  const row = db.prepare(query).get(param);
+  if (!row) throw new Error(`Seed error: missing ${label}`);
+  return row;
+}
+
 export function ensureDemoUsers(targetDb) {
   const insert = targetDb.prepare(`
     INSERT INTO users (name, email, password_hash, role, is_verified, verified_at, status)
@@ -68,34 +74,139 @@ function seedSpots(targetDb) {
 }
 
 function seedReservations(targetDb) {
-  const securityId = targetDb.prepare("SELECT id FROM users WHERE email = 'security@auk.org'").get()?.id;
-  const staff1Id = targetDb.prepare("SELECT id FROM users WHERE email = 'staff1@auk.org'").get()?.id;
-  const staff2Id = targetDb.prepare("SELECT id FROM users WHERE email = 'staff2@auk.org'").get()?.id;
-  const student1Id = targetDb.prepare("SELECT id FROM users WHERE email = 'student1@auk.org'").get()?.id;
+
+  function getOne(query, param) {
+  const row = targetDb.prepare(query).get(param);
+  if (!row) throw new Error("Missing seed data");
+  return row;
+}
+
+  function getAny(query) {
+    const row = targetDb.prepare(query).get();
+    if (!row) throw new Error("No matching spots found");
+    return row;
+  }
+  //mustGet helper find id
+  const security = mustGet(
+    targetDb,
+    "SELECT id FROM users WHERE email = ?",
+    "security@auk.org",
+    "security user"
+  );
+
+  const staff1 = mustGet(
+    targetDb,
+    "SELECT id FROM users WHERE email = ?",
+    "staff1@auk.org",
+    "staff1 user"
+  );
+
+  const staff2 = mustGet(
+    targetDb,
+    "SELECT id FROM users WHERE email = ?",
+    "staff2@auk.org",
+    "staff2 user"
+  );
+
+  const student1 = mustGet(
+    targetDb,
+    "SELECT id FROM users WHERE email = ?",
+    "student1@auk.org",
+    "student1 user"
+  );
+
+  const staffSpot1 = getAny(`
+    SELECT id FROM parking_spots
+    WHERE lot_type = 'staff'
+    LIMIT 1
+  `);
+
+  const staffSpot2 = getAny(`
+    SELECT id FROM parking_spots
+    WHERE lot_type = 'staff'
+    LIMIT 1 OFFSET 1
+  `);
+
+  const studentSpot = getAny(`
+    SELECT id FROM parking_spots
+    WHERE lot_type = 'general'
+    LIMIT 1
+  `);
+
   const insertReservation = targetDb.prepare(`
     INSERT INTO reservations (user_id, spot_id, start_time, end_time, status, approved_by, approval_note)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
+
   const insertRecurring = targetDb.prepare(`
     INSERT INTO recurring_reservations (user_id, spot_id, day_of_week, start_time, end_time, semester_start, semester_end, recurrence_type, status)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  insertReservation.run(student1Id, 1, "2026-04-18T08:00:00.000Z", "2026-04-18T10:00:00.000Z", "approved", securityId, "Approved for demo.");
-  insertReservation.run(staff1Id, 22, "2026-04-18T06:30:00.000Z", "2026-04-18T15:30:00.000Z", "approved", securityId, "Faculty recurring slot.");
-  insertReservation.run(staff2Id, 39, "2026-04-19T09:00:00.000Z", "2026-04-19T11:00:00.000Z", "pending", null, "");
+  // ───── FIXED RESERVATIONS ─────
 
-  insertRecurring.run(staff1Id, 20, 1, "2026-04-21T07:00:00.000Z", "2026-04-21T15:00:00.000Z", "2026-04-20", "2026-08-31", "semester", "active");
-  insertRecurring.run(staff2Id, 38, 3, "2026-04-22T08:00:00.000Z", "2026-04-22T14:00:00.000Z", "2026-04-20", "2026-08-31", "weekly", "active");
+  insertReservation.run(
+  student1.id,
+  studentSpot.id,
+  "2026-04-18T08:00:00.000Z",
+  "2026-04-18T10:00:00.000Z",
+  "approved",
+  security.id,
+  "Approved for demo."
+);
+
+insertReservation.run(
+  staff1.id,
+  staffSpot1.id,
+  "2026-04-18T06:30:00.000Z",
+  "2026-04-18T15:30:00.000Z",
+  "approved",
+  security.id,
+  "Faculty recurring slot."
+);
+
+insertReservation.run(
+  staff2.id,
+  staffSpot2.id,
+  "2026-04-19T09:00:00.000Z",
+  "2026-04-19T11:00:00.000Z",
+  "pending",
+  null,
+  ""
+);
+
+  // ───── FIXED RECURRING ─────
+
+  insertRecurring.run(
+    staff1.id,
+    staffSpot1.id,
+    1,
+    "2026-04-21T07:00:00.000Z",
+    "2026-04-21T15:00:00.000Z",
+    "2026-04-20",
+    "2026-08-31",
+    "semester",
+    "active"
+  );
+
+  insertRecurring.run(
+    staff2.id,
+    staffSpot2.id,
+    3,
+    "2026-04-22T08:00:00.000Z",
+    "2026-04-22T14:00:00.000Z",
+    "2026-04-20",
+    "2026-08-31",
+    "weekly",
+    "active"
+  );
 }
 
 export function runSeed(targetDb = createDatabase()) {
-  targetDb.exec("PRAGMA foreign_keys = OFF");
   resetTables(targetDb);
   seedUsers(targetDb);
   seedSpots(targetDb);
   seedReservations(targetDb);
-  targetDb.exec("PRAGMA foreign_keys = ON");
 
   console.log("Database seeded with demo users, 40 parking spots, and sample reservations.");
 }
