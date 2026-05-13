@@ -19,6 +19,33 @@ function isStudentRole(role) {
   return normalizeRole(role).includes("student");
 }
 
+const ROLE_LABELS = {
+  "student role 1": "Regular Student",
+  "student role 2": "Priority Student",
+  "student role 3": "Limited Access Student",
+  staff: "Staff Member",
+  professor: "Professor",
+  security: "Security/Admin"
+};
+
+const ROLE_DESCRIPTIONS = {
+  "student role 1": "Standard student parking access with normal limits.",
+  "student role 2": "Student with extended parking access approved by security/admin.",
+  "student role 3": "Student with stricter limits because of policy, availability, or behavior.",
+  staff: "Staff parking access with broader scheduling rights.",
+  professor: "Professor parking access with broader scheduling rights.",
+  security: "Manages users, parking spots, reports, rules, and approvals."
+};
+
+function getRoleLabel(role) {
+  return ROLE_LABELS[normalizeRole(role)] || String(role || "Unknown role");
+}
+
+function getRoleDescription(role, descriptionFromRule = "") {
+  const normalized = normalizeRole(role);
+  return String(descriptionFromRule || "").trim() || ROLE_DESCRIPTIONS[normalized] || "";
+}
+
 function getTabsForRole(role) {
   if (isAdminRole(role)) {
     return ["map", "admin", "reservations", "profile"];
@@ -1162,7 +1189,7 @@ function ReservationList({ title, reservations, onCancel, onReport, showUser = f
               <p><strong>Booking ID:</strong> #{reservation.id}</p>
               <p>{formatDateTime(reservation.start_time)} to {formatDateTime(reservation.end_time)}</p>
               {reservation.lot_type ? <small>{reservation.lot_type} lot</small> : null}
-              {showUser && reservation.user_name ? <small>{reservation.user_name} | {reservation.user_role}</small> : null}
+              {showUser && reservation.user_name ? <small>{reservation.user_name} | {getRoleLabel(reservation.user_role)}</small> : null}
               {onReport ? (
                 <div className="stack-form">
                   <label>
@@ -1316,12 +1343,12 @@ function AdminScreen({
             Role
             <select value={userFilters.role} onChange={(event) => setUserFilters({ ...userFilters, role: event.target.value })}>
               <option value="">All roles</option>
-              <option value="student role 1">Student Role 1</option>
-              <option value="student role 2">Student Role 2</option>
-              <option value="student role 3">Student Role 3</option>
-              <option value="staff">Staff</option>
+              <option value="student role 1">Regular Student</option>
+              <option value="student role 2">Priority Student</option>
+              <option value="student role 3">Limited Access Student</option>
+              <option value="staff">Staff Member</option>
               <option value="professor">Professor</option>
-              <option value="security">Security</option>
+              <option value="security">Security/Admin</option>
             </select>
           </label>
           <label>
@@ -1349,19 +1376,20 @@ function AdminScreen({
               <div>
                 <strong>{account.name}</strong>
                 <p>{account.email}</p>
-                <p>{account.role} | {account.license_plates || "No license plate saved"}</p>
+                <p>{getRoleLabel(account.role)} | {account.license_plates || "No license plate saved"}</p>
                 <p>{account.phone_number || "No phone number saved"}</p>
+                <p>{getRoleDescription(account.role, account.role_description)}</p>
                 {account.profile_note ? <p>{account.profile_note}</p> : null}
               </div>
               <div className="user-control-stack">
                 <StatusPill value={account.status} />
-                <StatusPill value={account.role} />
+                <StatusPill value={getRoleLabel(account.role)} />
                 <select
                   value={account.role}
                   onChange={(event) => onUpdateUserRole(account.id, event.target.value)}
                 >
                   {roleRules.map((rule) => (
-                    <option key={rule.role_name} value={rule.role_name}>{rule.role_name}</option>
+                    <option key={rule.role_name} value={rule.role_name}>{getRoleLabel(rule.role_name)}</option>
                   ))}
                 </select>
                 <button
@@ -1399,12 +1427,12 @@ function AdminScreen({
           <label>
             Role
             <select value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}>
-              <option value="student role 1">Student Role 1</option>
-              <option value="student role 2">Student Role 2</option>
-              <option value="student role 3">Student Role 3</option>
-              <option value="staff">Staff</option>
+              <option value="student role 1">Regular Student</option>
+              <option value="student role 2">Priority Student</option>
+              <option value="student role 3">Limited Access Student</option>
+              <option value="staff">Staff Member</option>
               <option value="professor">Professor</option>
-              <option value="security">Security</option>
+              <option value="security">Security/Admin</option>
             </select>
           </label>
           <button className="secondary-button" type="submit">Create account</button>
@@ -1475,11 +1503,11 @@ function AdminScreen({
             Choose role
             <select value={selectedRoleRule} onChange={(event) => setSelectedRoleRule(event.target.value)}>
               {roleRules.map((rule) => (
-                <option key={rule.role_name} value={rule.role_name}>{rule.role_name}</option>
+                <option key={rule.role_name} value={rule.role_name}>{getRoleLabel(rule.role_name)}</option>
               ))}
             </select>
           </label>
-          <p className="helper-text">Current rights for selected role are shown below. Change values and save.</p>
+          <p className="helper-text">{getRoleDescription(selectedRoleRule, roleRuleForm.roleDescription) || "Current rights for selected role are shown below. Change values and save."}</p>
           <label>
             Max days ahead
             <input type="number" min={0} max={365} value={roleRuleForm.maxDaysAhead} onChange={(event) => setRoleRuleForm({ ...roleRuleForm, maxDaysAhead: Number(event.target.value) })} />
@@ -1611,7 +1639,7 @@ function ProfileScreen({ user, settings, onResendVerification, onSaveProfile, on
         <h3>Profile</h3>
         <p><strong>Name:</strong> {user.name}</p>
         <p><strong>Email:</strong> {user.email}</p>
-        <p><strong>Role:</strong> {user.role}</p>
+        <p><strong>Role:</strong> {getRoleLabel(user.role)}</p>
         <p><strong>Status:</strong> {user.status}</p>
         <p><strong>Email verification:</strong> {user.is_verified === false ? "Not verified yet" : "Verified"}</p>
       </div>
