@@ -699,7 +699,7 @@ function SecurityMapScreen({ user, spots, onCreateReservation, onCreateRecurring
     return nextWeek;
   }, [currentWeekStart, todayValue]);
   const [weekStart, setWeekStart] = useState(initialWeekStart);
-  const [selectedLotType, setSelectedLotType] = useState("general");
+  const [selectedLotType, setSelectedLotType] = useState("all");
   const weekDates = useMemo(() => getWeekdays(weekStart), [weekStart]);
   const [selectedDate, setSelectedDate] = useState(
     weekDates.find((date) => date.value >= todayValue)?.value || weekDates[0]?.value || formatDateValue(new Date())
@@ -751,7 +751,7 @@ function SecurityMapScreen({ user, spots, onCreateReservation, onCreateRecurring
 
   async function refreshMapSpots(dateValue, lotType = selectedLotType) {
     try {
-      const nextSpots = await api.spots(dateValue, lotType);
+      const nextSpots = await api.spots(dateValue, lotType === "all" ? "" : lotType);
       setMapSpots(nextSpots);
     } catch (requestError) {
       setError(requestError.message);
@@ -879,6 +879,7 @@ function SecurityMapScreen({ user, spots, onCreateReservation, onCreateRecurring
         <label>
           Parking lot
           <select value={selectedLotType} onChange={(event) => setSelectedLotType(event.target.value)}>
+            <option value="all">All Parking Lots</option>
             <option value="general">General Parking Lot</option>
             <option value="staff">Staff Parking Lot</option>
           </select>
@@ -895,7 +896,7 @@ function SecurityMapScreen({ user, spots, onCreateReservation, onCreateRecurring
         />
 
         <div className="selected-date-banner">
-          <strong>{selectedDate ? formatLongDate(selectedDate) : "Choose a date"} | {formatLotLabel(selectedLotType)}</strong>
+          <strong>{selectedDate ? formatLongDate(selectedDate) : "Choose a date"} | {selectedLotType === "all" ? "All Parking Lots" : formatLotLabel(selectedLotType)}</strong>
         </div>
 
         <div className="map-stage">
