@@ -346,6 +346,11 @@ select {
   background: #f4c8c7;
 }
 
+.legend-dot.reported,
+.spot-reported {
+  background: #f8b2c9;
+}
+
 .map-shell {
   display: grid;
   grid-template-columns: 1fr 88px 1fr;
@@ -531,6 +536,10 @@ select {
   justify-items: end;
 }
 
+.stacked-row {
+  align-items: flex-start;
+}
+
 .user-control-stack select {
   min-width: 132px;
   padding: 8px 10px;
@@ -541,6 +550,10 @@ select {
   display: grid;
   gap: 8px;
   justify-items: end;
+}
+
+.action-row.align-start {
+  justify-items: start;
 }
 
 .status-pill {
@@ -568,13 +581,19 @@ select {
 
 .status-rejected,
 .status-cancelled,
-.status-unavailable {
+.status-unavailable,
+.status-banned {
   background: rgba(190, 75, 73, 0.14);
   color: var(--danger);
 }
 
 .status-student {
   background: rgba(12, 122, 90, 0.1);
+}
+
+.status-general,
+.status-staff {
+  text-transform: none;
 }
 
 .inline-message,
@@ -673,6 +692,35 @@ select {
 
 .bottom-nav button.active {
   background: rgba(12, 122, 90, 0.12);
+  color: var(--brand-strong);
+  font-weight: 700;
+}
+
+.compact-select {
+  width: auto;
+  min-width: 170px;
+}
+
+.admin-lot-summary {
+  margin-top: 12px;
+}
+
+.section-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.section-tabs button {
+  background: rgba(23, 52, 43, 0.06);
+  color: var(--text);
+  border-radius: 14px;
+  padding: 10px 6px;
+  font-size: 0.78rem;
+}
+
+.section-tabs button.active {
+  background: rgba(12, 122, 90, 0.15);
   color: var(--brand-strong);
   font-weight: 700;
 }

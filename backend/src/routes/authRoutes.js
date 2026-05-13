@@ -8,6 +8,29 @@ import { clearPasswordResetToken, consumePasswordResetToken, issuePasswordResetE
 
 const router = express.Router();
 
+function normalizeLicensePlates(rawValue) {
+  const entries = String(rawValue || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  if (entries.length > 5) {
+    const error = new Error("You can save up to 5 license plates.");
+    error.status = 400;
+    throw error;
+  }
+
+  entries.forEach((plate) => {
+    if (plate.length > 10) {
+      const error = new Error("Each license plate must be 10 characters or fewer.");
+      error.status = 400;
+      throw error;
+    }
+  });
+
+  return entries.join(", ");
+}
+
 function issueToken(user) {
   return jwt.sign({ id: user.id, email: user.email, role: user.role, name: user.name }, config.jwtSecret, {
     expiresIn: "7d"
@@ -34,7 +57,7 @@ router.post("/register", (req, res, next) => {
 
     const result = req.db.prepare(`
       INSERT INTO users (name, email, password_hash, role, is_verified, verification_token_hash, verification_expires_at, verified_at, status)
-      VALUES (?, ?, ?, 'student', 0, NULL, NULL, NULL, 'active')
+      VALUES (?, ?, ?, 'student role 1', 0, NULL, NULL, NULL, 'active')
     `).run(name.trim(), normalizedEmail, hashPassword(password));
 
     const user = req.db.prepare("SELECT id, name, email, role, status, is_verified FROM users WHERE id = ?").get(result.lastInsertRowid);
@@ -64,7 +87,9 @@ router.post("/login", (req, res, next) => {
       email: user.email,
       role: user.role,
       status: user.status,
-      is_verified: Boolean(user.is_verified)
+      is_verified: Boolean(user.is_verified),
+      license_plates: user.license_plates || "",
+      profile_note: user.profile_note || ""
     };
 
     res.json({ token: issueToken(safeUser), user: safeUser });
@@ -75,8 +100,55 @@ router.post("/login", (req, res, next) => {
 
 router.get("/me", authenticate, (req, res) => {
   const user = req.db.prepare(`
-    SELECT id, name, email, role, status, is_verified
+    SELECT
+      users.id,
+      users.name,
+      users.email,
+      users.role,
+      users.status,
+      users.is_verified,
+      users.license_plates,
+      users.profile_note,
+      COALESCE(role_scheduling_rules.max_days_ahead, 10) AS role_max_days_ahead,
+      COALESCE(role_scheduling_rules.role_description, '') AS role_description
     FROM users
+    LEFT JOIN role_scheduling_rules ON role_scheduling_rules.role_name = users.role
+    WHERE id = ?
+  `).get(req.user.id);
+
+  res.json(user);
+});
+
+router.patch("/me", authenticate, (req, res) => {
+  let licensePlates = "";
+  try {
+    licensePlates = normalizeLicensePlates(req.body?.licensePlates || "");
+  } catch (error) {
+    return res.status(error.status || 400).json({ message: error.message });
+  }
+  const profileNote = String(req.body?.profileNote || "").trim();
+
+  req.db.prepare(`
+    UPDATE users
+    SET license_plates = ?,
+        profile_note = ?
+    WHERE id = ?
+  `).run(licensePlates, profileNote, req.user.id);
+
+  const user = req.db.prepare(`
+    SELECT
+      users.id,
+      users.name,
+      users.email,
+      users.role,
+      users.status,
+      users.is_verified,
+      users.license_plates,
+      users.profile_note,
+      COALESCE(role_scheduling_rules.max_days_ahead, 10) AS role_max_days_ahead,
+      COALESCE(role_scheduling_rules.role_description, '') AS role_description
+    FROM users
+    LEFT JOIN role_scheduling_rules ON role_scheduling_rules.role_name = users.role
     WHERE id = ?
   `).get(req.user.id);
 
@@ -176,8 +248,19 @@ router.post("/reset-password", (req, res, next) => {
     clearPasswordResetToken(req.db, user.id);
 
     const safeUser = req.db.prepare(`
-      SELECT id, name, email, role, status, is_verified
+      SELECT
+        users.id,
+        users.name,
+        users.email,
+        users.role,
+        users.status,
+        users.is_verified,
+        users.license_plates,
+        users.profile_note,
+        COALESCE(role_scheduling_rules.max_days_ahead, 10) AS role_max_days_ahead,
+        COALESCE(role_scheduling_rules.role_description, '') AS role_description
       FROM users
+      LEFT JOIN role_scheduling_rules ON role_scheduling_rules.role_name = users.role
       WHERE id = ?
     `).get(user.id);
 

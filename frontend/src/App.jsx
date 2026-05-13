@@ -1,11 +1,30 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api.js";
 
-const navByRole = {
-  student: ["map", "reservations", "profile"],
-  staff: ["map", "reservations", "profile"],
-  security: ["map", "admin", "reservations", "profile"]
-};
+function normalizeRole(role) {
+  return String(role || "").trim().toLowerCase();
+}
+
+function isAdminRole(role) {
+  const normalized = normalizeRole(role);
+  return normalized.includes("security") || normalized.includes("admin");
+}
+
+function isStaffLikeRole(role) {
+  const normalized = normalizeRole(role);
+  return normalized.includes("staff") || normalized.includes("professor");
+}
+
+function isStudentRole(role) {
+  return normalizeRole(role).includes("student");
+}
+
+function getTabsForRole(role) {
+  if (isAdminRole(role)) {
+    return ["map", "admin", "reservations", "profile"];
+  }
+  return ["map", "reservations", "profile"];
+}
 
 const labels = {
   map: "Reserve",
@@ -16,7 +35,7 @@ const labels = {
 
 function getTabLabel(role, tab) {
   if (tab === "map") {
-    return role === "security" ? "Map" : "Reserve";
+    return isAdminRole(role) ? "Map" : "Reserve";
   }
 
   return labels[tab];
@@ -33,6 +52,7 @@ function formatDateTime(value) {
 
 function spotVisualStatus(spot) {
   if (!spot.is_available) return "unavailable";
+  if (spot.is_reported_occupied) return "reported";
   if (spot.current_reservation_status === "pending") return "pending";
   if (spot.current_reservation_status === "approved") return "reserved";
   return "available";
@@ -97,6 +117,10 @@ function formatReservationMode(value) {
   if (value === "approved") return "Auto-approved";
   if (value === "pending") return "Pending approval";
   return "Use default";
+}
+
+function formatLotLabel(value) {
+  return value === "staff" ? "Staff Parking Lot" : "General Parking Lot";
 }
 
 function getHourSlotOptions() {
@@ -338,7 +362,7 @@ function StatusPill({ value }) {
 }
 
 function HomeScreen({ user, stats, settings, onQuickTab }) {
-  const cards = user.role === "security"
+  const cards = isAdminRole(user.role)
     ? [
         { label: "Pending approvals", value: stats.pendingReservations ?? 0 },
         { label: "Available spots", value: (stats.totalSpots ?? 0) - (stats.unavailableSpots ?? 0) },
@@ -346,8 +370,8 @@ function HomeScreen({ user, stats, settings, onQuickTab }) {
       ]
     : [
         { label: "Active booking cap", value: settings.student_max_active_reservations ?? 5 },
-        { label: "Today status", value: user.role === "staff" ? "Faculty access" : "Student access" },
-        { label: "Booking mode", value: user.role === "staff" ? "Recurring enabled" : "Single slots" }
+        { label: "Today status", value: isStaffLikeRole(user.role) ? "Faculty access" : "Student access" },
+        { label: "Booking mode", value: isStaffLikeRole(user.role) ? "Recurring enabled" : "Single slots" }
       ];
 
   return (
@@ -355,7 +379,7 @@ function HomeScreen({ user, stats, settings, onQuickTab }) {
       <div className="hero-card compact">
         <span className="eyebrow">Welcome back</span>
         <h2>{user.name}</h2>
-        <p>{user.role === "security" ? "Manage approvals, spots, and user settings." : "Reserve a spot and manage your parking schedule."}</p>
+        <p>{isAdminRole(user.role) ? "Manage approvals, spots, and user settings." : "Reserve a spot and manage your parking schedule."}</p>
       </div>
 
       <div className="card-grid">
@@ -372,7 +396,7 @@ function HomeScreen({ user, stats, settings, onQuickTab }) {
         <div className="action-stack">
           <button className="secondary-button" onClick={() => onQuickTab("map")}>Open parking map</button>
           <button className="secondary-button" onClick={() => onQuickTab("reservations")}>View reservations</button>
-          {user.role === "security" ? <button className="secondary-button" onClick={() => onQuickTab("admin")}>Review admin tools</button> : null}
+          {isAdminRole(user.role) ? <button className="secondary-button" onClick={() => onQuickTab("admin")}>Review admin tools</button> : null}
         </div>
       </div>
     </div>
@@ -460,6 +484,7 @@ function SpotModal({
   onReserve,
   onCreateRecurring,
   onToggleAvailability,
+  onReportOccupied,
   loading,
   message,
   error
@@ -468,6 +493,7 @@ function SpotModal({
 
   const status = spotVisualStatus(spot);
   const isAvailable = status === "available";
+  const [reportForm, setReportForm] = useState({ licensePlate: "", description: "" });
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -481,6 +507,15 @@ function SpotModal({
         </div>
 
         <StatusPill value={status} />
+        {spot.current_reserved_by_name ? (
+          <p><strong>Reserved by:</strong> {spot.current_reserved_by_name}</p>
+        ) : null}
+        {spot.current_reserved_until ? (
+          <p><strong>Reserved until:</strong> {formatDateTime(spot.current_reserved_until)}</p>
+        ) : null}
+        {spot.is_reported_occupied ? (
+          <div className="inline-message warning">This spot was reported occupied.</div>
+        ) : null}
 
         {!isAvailable ? (
           <div className="inline-message error">
@@ -518,7 +553,7 @@ function SpotModal({
           </form>
         ) : null}
 
-        {isAvailable && user.role !== "student" ? (
+        {isAvailable && !isStudentRole(user.role) ? (
           <form className="stack-form recurring-form" onSubmit={onCreateRecurring}>
             <h4>Recurring booking</h4>
             <label>
@@ -571,17 +606,47 @@ function SpotModal({
           </form>
         ) : null}
 
-        {user.role === "security" ? (
-          <button className="ghost-button full-width" onClick={onToggleAvailability}>
-            {spot.is_available ? "Mark unavailable" : "Mark available"}
-          </button>
+        {isAdminRole(user.role) ? (
+          <>
+            <form className="stack-form recurring-form" onSubmit={async (event) => {
+              event.preventDefault();
+              await onReportOccupied({
+                spotId: spot.id,
+                licensePlate: reportForm.licensePlate,
+                description: reportForm.description
+              });
+              setReportForm({ licensePlate: "", description: "" });
+            }}>
+              <h4>Report occupied spot</h4>
+              <label>
+                License plate
+                <input
+                  value={reportForm.licensePlate}
+                  onChange={(event) => setReportForm((current) => ({ ...current, licensePlate: event.target.value }))}
+                  placeholder="Optional"
+                />
+              </label>
+              <label>
+                Comment
+                <input
+                  value={reportForm.description}
+                  onChange={(event) => setReportForm((current) => ({ ...current, description: event.target.value }))}
+                  placeholder="Optional"
+                />
+              </label>
+              <button className="secondary-button" type="submit">Save occupied report</button>
+            </form>
+            <button className="ghost-button full-width" onClick={onToggleAvailability}>
+              {spot.is_available ? "Mark unavailable" : "Mark available"}
+            </button>
+          </>
         ) : null}
       </div>
     </div>
   );
 }
 
-function SecurityMapScreen({ user, spots, onCreateReservation, onCreateRecurring, onUpdateSpot }) {
+function SecurityMapScreen({ user, spots, onCreateReservation, onCreateRecurring, onUpdateSpot, onReportSpot }) {
   const todayValue = useMemo(() => formatDateValue(new Date()), []);
   const currentWeekStart = useMemo(() => getMonday(new Date()), []);
   const initialWeekStart = useMemo(() => {
@@ -595,6 +660,7 @@ function SecurityMapScreen({ user, spots, onCreateReservation, onCreateRecurring
     return nextWeek;
   }, [currentWeekStart, todayValue]);
   const [weekStart, setWeekStart] = useState(initialWeekStart);
+  const [selectedLotType, setSelectedLotType] = useState("general");
   const weekDates = useMemo(() => getWeekdays(weekStart), [weekStart]);
   const [selectedDate, setSelectedDate] = useState(
     weekDates.find((date) => date.value >= todayValue)?.value || weekDates[0]?.value || formatDateValue(new Date())
@@ -606,7 +672,7 @@ function SecurityMapScreen({ user, spots, onCreateReservation, onCreateRecurring
   const [error, setError] = useState("");
   const [reservationForm, setReservationForm] = useState({
     startClock: "08:00",
-    endClock: user.role === "staff" ? "16:00" : "10:00"
+    endClock: isStaffLikeRole(user.role) ? "16:00" : "10:00"
   });
   const [recurringForm, setRecurringForm] = useState({
     startClock: "08:00",
@@ -644,9 +710,9 @@ function SecurityMapScreen({ user, spots, onCreateReservation, onCreateRecurring
     }
   }, [mapSpots, activeSpot]);
 
-  async function refreshMapSpots(dateValue) {
+  async function refreshMapSpots(dateValue, lotType = selectedLotType) {
     try {
-      const nextSpots = await api.spots(dateValue);
+      const nextSpots = await api.spots(dateValue, lotType);
       setMapSpots(nextSpots);
     } catch (requestError) {
       setError(requestError.message);
@@ -655,9 +721,9 @@ function SecurityMapScreen({ user, spots, onCreateReservation, onCreateRecurring
 
   useEffect(() => {
     if (selectedDate) {
-      refreshMapSpots(selectedDate);
+      refreshMapSpots(selectedDate, selectedLotType);
     }
-  }, [selectedDate]);
+  }, [selectedDate, selectedLotType]);
 
   function handleDateSelect(value) {
     setSelectedDate(value);
@@ -738,6 +804,17 @@ function SecurityMapScreen({ user, spots, onCreateReservation, onCreateRecurring
     }
   }
 
+  async function reportOccupied(payload) {
+    try {
+      await onReportSpot(payload);
+      await refreshMapSpots(selectedDate, selectedLotType);
+      setMessage("Occupied report saved.");
+      setError("");
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
   function goToPreviousWeek() {
     const previous = new Date(weekStart);
     previous.setDate(weekStart.getDate() - 7);
@@ -760,6 +837,14 @@ function SecurityMapScreen({ user, spots, onCreateReservation, onCreateRecurring
   return (
     <div className="screen">
       <div className="panel minimal-panel">
+        <label>
+          Parking lot
+          <select value={selectedLotType} onChange={(event) => setSelectedLotType(event.target.value)}>
+            <option value="general">General Parking Lot</option>
+            <option value="staff">Staff Parking Lot</option>
+          </select>
+        </label>
+
         <WeekStrip
           dates={weekDates}
           selectedDate={selectedDate}
@@ -771,7 +856,7 @@ function SecurityMapScreen({ user, spots, onCreateReservation, onCreateRecurring
         />
 
         <div className="selected-date-banner">
-          <strong>{selectedDate ? formatLongDate(selectedDate) : "Choose a date"}</strong>
+          <strong>{selectedDate ? formatLongDate(selectedDate) : "Choose a date"} | {formatLotLabel(selectedLotType)}</strong>
         </div>
 
         <div className="map-stage">
@@ -795,6 +880,7 @@ function SecurityMapScreen({ user, spots, onCreateReservation, onCreateRecurring
         onReserve={reserveSpot}
         onCreateRecurring={reserveRecurring}
         onToggleAvailability={toggleAvailability}
+        onReportOccupied={reportOccupied}
         loading={loading}
         message={message}
         error={error}
@@ -823,10 +909,10 @@ function LotReservationScreen({ user, settings, onCreateReservation, onCreateRec
   const [selectedDate, setSelectedDate] = useState(
     weekDates.find((date) => date.value >= todayValue)?.value || weekDates[0]?.value || formatDateValue(new Date())
   );
-  const [selectedLotType, setSelectedLotType] = useState(user.role === "staff" ? "staff" : "general");
+  const [selectedLotType, setSelectedLotType] = useState(isStaffLikeRole(user.role) ? "staff" : "general");
   const [form, setForm] = useState({
     startClock: "07:30",
-    endClock: user.role === "staff" ? "16:00" : "09:00",
+    endClock: isStaffLikeRole(user.role) ? "16:00" : "09:00",
     semesterStart: selectedDate,
     semesterEnd: selectedDate,
     recurrenceType: "weekly"
@@ -877,12 +963,12 @@ function LotReservationScreen({ user, settings, onCreateReservation, onCreateRec
 
     try {
       const payload = {
-        lotType: user.role === "student" ? "general" : selectedLotType,
+        lotType: isStudentRole(user.role) ? "general" : selectedLotType,
         startTime: new Date(`${selectedDate}T${form.startClock}`).toISOString(),
         endTime: new Date(`${selectedDate}T${form.endClock}`).toISOString()
       };
 
-      if (user.role === "student") {
+      if (isStudentRole(user.role)) {
         payload.startClock = form.startClock;
         payload.endClock = form.endClock;
       }
@@ -924,8 +1010,8 @@ function LotReservationScreen({ user, settings, onCreateReservation, onCreateRec
 
   const canGoPrevious = weekStart.getTime() > currentWeekStart.getTime();
   const selectedStartMinutes = studentSlotOptions.find((option) => option.value === form.startClock)?.minutes ?? 450;
-  const studentEndOptions = studentSlotOptions.filter((option) => option.minutes >= selectedStartMinutes + 90);
-  const lotCards = user.role === "student"
+  const studentEndOptions = studentSlotOptions.filter((option) => option.minutes >= selectedStartMinutes + 60);
+  const lotCards = isStudentRole(user.role)
     ? [{ key: "general", title: "General Parking Lot", description: "Students reserve from the general parking lot." }]
     : [
         { key: "general", title: "General Parking Lot", description: "Shared lot available for staff reservations." },
@@ -955,7 +1041,7 @@ function LotReservationScreen({ user, settings, onCreateReservation, onCreateRec
               key={lot.key}
               className={`lot-card ${selectedLotType === lot.key ? "active" : ""}`}
               onClick={() => setSelectedLotType(lot.key)}
-              disabled={user.role === "student"}
+              disabled={isStudentRole(user.role)}
             >
               <strong>{lot.title}</strong>
               <span>{lot.description}</span>
@@ -965,7 +1051,7 @@ function LotReservationScreen({ user, settings, onCreateReservation, onCreateRec
       </div>
 
       <div className="panel">
-        <h3>{user.role === "student" ? "Reserve a parking space" : "Reserve from selected lot"}</h3>
+        <h3>{isStudentRole(user.role) ? "Reserve a parking space" : "Reserve from selected lot"}</h3>
         {isUnverified ? (
           <div className="inline-message warning">
             Verify your email first. You can browse booking times now, but you cannot reserve a parking spot until your account is verified.
@@ -979,13 +1065,13 @@ function LotReservationScreen({ user, settings, onCreateReservation, onCreateRec
               onChange={(event) => {
                 const nextStart = event.target.value;
                 const nextStartMinutes = studentSlotOptions.find((option) => option.value === nextStart)?.minutes ?? 450;
-                const fallbackEnd = studentSlotOptions.find((option) => option.minutes >= nextStartMinutes + 90)?.value || "20:00";
+                const fallbackEnd = studentSlotOptions.find((option) => option.minutes >= nextStartMinutes + 60)?.value || "20:00";
                 setForm((current) => {
                   const currentEndMinutes = studentSlotOptions.find((option) => option.value === current.endClock)?.minutes ?? 0;
                   return {
                     ...current,
                     startClock: nextStart,
-                    endClock: currentEndMinutes >= nextStartMinutes + 90 ? current.endClock : fallbackEnd
+                    endClock: currentEndMinutes >= nextStartMinutes + 60 ? current.endClock : fallbackEnd
                   };
                 });
               }}
@@ -1003,7 +1089,7 @@ function LotReservationScreen({ user, settings, onCreateReservation, onCreateRec
               ))}
             </select>
           </label>
-          <p className="helper-text">Bookings run from 07:30 to 20:00 in 30-minute steps, with a minimum stay of 90 minutes.</p>
+          <p className="helper-text">Bookings run from 07:30 to 20:00 in 30-minute steps, with a minimum stay of 1 hour.</p>
           <button className="primary-button" type="submit" disabled={loading || isUnverified}>
             {loading ? "Saving..." : "Reserve spot"}
           </button>
@@ -1012,7 +1098,7 @@ function LotReservationScreen({ user, settings, onCreateReservation, onCreateRec
         {message ? <div className="inline-message success">{message}</div> : null}
       </div>
 
-      {user.role === "staff" ? (
+      {isStaffLikeRole(user.role) ? (
         <div className="panel">
           <h3>Recurring reservation</h3>
           <form className="stack-form" onSubmit={submitRecurring}>
@@ -1043,19 +1129,13 @@ function LotReservationScreen({ user, settings, onCreateReservation, onCreateRec
         </div>
       ) : null}
 
-      <div className="panel">
-        <h3>Reservation policy</h3>
-        <p><strong>Default approval mode:</strong> {formatReservationMode(settings.default_reservation_mode)}</p>
-        <p><strong>Student limit:</strong> {settings.student_max_active_reservations ?? 5} active reservations</p>
-        <p><strong>Student max duration:</strong> {settings.student_max_hours ?? 6} hours</p>
-        <p><strong>Staff max duration:</strong> {settings.staff_max_hours ?? 12} hours</p>
-        <p><strong>Booking window:</strong> 07:30 to 20:00 with 30-minute steps and a 90-minute minimum stay</p>
-      </div>
     </div>
   );
 }
 
-function ReservationList({ title, reservations, onCancel, showUser = false }) {
+function ReservationList({ title, reservations, onCancel, onReport, showUser = false }) {
+  const [reportDrafts, setReportDrafts] = useState({});
+
   return (
     <div className="panel">
       <div className="section-heading">
@@ -1067,9 +1147,32 @@ function ReservationList({ title, reservations, onCancel, showUser = false }) {
           <div className="reservation-card" key={reservation.id}>
             <div>
               <strong>{reservation.spot_code}</strong>
+              <p><strong>Booking ID:</strong> #{reservation.id}</p>
               <p>{formatDateTime(reservation.start_time)} to {formatDateTime(reservation.end_time)}</p>
               {reservation.lot_type ? <small>{reservation.lot_type} lot</small> : null}
               {showUser && reservation.user_name ? <small>{reservation.user_name} | {reservation.user_role}</small> : null}
+              {onReport ? (
+                <div className="stack-form">
+                  <label>
+                    Report note
+                    <input
+                      value={reportDrafts[reservation.id] || ""}
+                      onChange={(event) => setReportDrafts((current) => ({ ...current, [reservation.id]: event.target.value }))}
+                      placeholder="Describe the issue"
+                    />
+                  </label>
+                  <button
+                    className="mini-button"
+                    onClick={() => onReport({
+                      spotId: reservation.spot_id,
+                      description: reportDrafts[reservation.id] || "",
+                      licensePlate: ""
+                    })}
+                  >
+                    Report
+                  </button>
+                </div>
+              ) : null}
             </div>
             <div className="reservation-actions">
               <StatusPill value={reservation.status} />
@@ -1084,78 +1187,180 @@ function ReservationList({ title, reservations, onCancel, showUser = false }) {
 }
 
 function AdminScreen({
-  dashboard,
   users,
   approvals,
-  settings,
+  reports,
+  roleRules,
   onApprove,
   onReject,
   onCreateUser,
-  onSaveSettings,
   onCreateSpot,
-  onUpdateUserApprovalMode,
-  spots
+  onSearchUsers,
+  onBanUser,
+  onUnbanUser,
+  onUpdateUserRole,
+  onUpdateRoleRule
 }) {
+  const [activeSection, setActiveSection] = useState("users");
+  const [usersMode, setUsersMode] = useState("search");
   const [userForm, setUserForm] = useState({ name: "", email: "", password: "", role: "staff" });
   const [spotForm, setSpotForm] = useState({ code: "", side: "left", type: "standard", lotType: "general", notes: "" });
-  const [settingsForm, setSettingsForm] = useState({
-    studentMaxActiveReservations: settings.student_max_active_reservations ?? 5,
-    studentMaxHours: settings.student_max_hours ?? 6,
-    staffMaxHours: settings.staff_max_hours ?? 12,
-    defaultReservationMode: settings.default_reservation_mode ?? "pending",
-    requireAdminApproval: Boolean(settings.require_admin_approval)
+  const [selectedLotType, setSelectedLotType] = useState("general");
+  const [userFilters, setUserFilters] = useState({ name: "", email: "", role: "", licensePlate: "" });
+  const [selectedRoleRule, setSelectedRoleRule] = useState(roleRules[0]?.role_name || "");
+  const [roleRuleForm, setRoleRuleForm] = useState({
+    maxDaysAhead: 10,
+    maxDailyActiveReservations: "",
+    maxReservationHours: "",
+    approvalMode: "approved",
+    roleDescription: ""
   });
 
   useEffect(() => {
-    setSettingsForm({
-      studentMaxActiveReservations: settings.student_max_active_reservations ?? 5,
-      studentMaxHours: settings.student_max_hours ?? 6,
-      staffMaxHours: settings.staff_max_hours ?? 12,
-      defaultReservationMode: settings.default_reservation_mode ?? "pending",
-      requireAdminApproval: Boolean(settings.require_admin_approval)
+    const nextRole = selectedRoleRule || roleRules[0]?.role_name || "";
+    if (!nextRole) return;
+    const rule = roleRules.find((item) => item.role_name === nextRole);
+    if (!rule) return;
+    setSelectedRoleRule(nextRole);
+    setRoleRuleForm({
+      maxDaysAhead: rule.max_days_ahead ?? 10,
+      maxDailyActiveReservations: rule.max_daily_active_reservations ?? "",
+      maxReservationHours: rule.max_reservation_hours ?? "",
+      approvalMode: rule.approval_mode || "approved",
+      roleDescription: rule.role_description || ""
     });
-  }, [settings]);
+  }, [roleRules, selectedRoleRule]);
 
   return (
     <div className="screen">
-      <div className="card-grid">
-        {Object.entries({
-          "Total users": dashboard.users,
-          "Pending approvals": dashboard.pendingReservations,
-          "Unavailable spots": dashboard.unavailableSpots,
-          "Approved reservations": dashboard.approvedReservations
-        }).map(([label, value]) => (
-          <div className="panel stat-card" key={label}>
-            <span>{label}</span>
-            <strong>{value ?? 0}</strong>
-          </div>
-        ))}
-      </div>
 
       <div className="panel">
-        <div className="section-heading">
-          <h3>Pending approvals</h3>
-          <p>Review student and staff requests</p>
+        <div className="section-tabs">
+          {[
+            { key: "parkings", label: "Parkings" },
+            { key: "users", label: "Users" },
+            { key: "reports", label: "Reports" },
+            { key: "rules", label: "Scheduling Rules" }
+          ].map((section) => (
+            <button
+              key={section.key}
+              className={activeSection === section.key ? "active" : ""}
+              onClick={() => setActiveSection(section.key)}
+            >
+              {section.label}
+            </button>
+          ))}
         </div>
-        <div className="reservation-list">
-          {approvals.map((reservation) => (
-            <div className="reservation-card" key={reservation.id}>
+      </div>
+
+      {activeSection === "parkings" ? (
+        <div className="panel">
+          <div className="section-heading">
+            <h3>Parking operations</h3>
+            <select className="compact-select" value={selectedLotType} onChange={(event) => setSelectedLotType(event.target.value)}>
+              <option value="general">General Parking Lot</option>
+              <option value="staff">Staff Parking Lot</option>
+            </select>
+          </div>
+          <p>Use this section to add spots, review lot status, and process pending parking approvals.</p>
+        </div>
+      ) : null}
+
+      {activeSection === "users" ? (
+        <div className="panel">
+        <div className="section-heading">
+          <div>
+            <h3>User management</h3>
+            <p>Search users, review details, and manage banned access.</p>
+          </div>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => setUsersMode((mode) => (mode === "search" ? "create" : "search"))}
+          >
+            {usersMode === "search" ? "Switch to user create" : "Switch to user search"}
+          </button>
+        </div>
+        {usersMode === "search" ? (
+          <>
+        <form className="stack-form" onSubmit={(event) => {
+          event.preventDefault();
+          onSearchUsers(userFilters);
+        }}>
+          <label>
+            Name
+            <input value={userFilters.name} onChange={(event) => setUserFilters({ ...userFilters, name: event.target.value })} />
+          </label>
+          <label>
+            Email
+            <input value={userFilters.email} onChange={(event) => setUserFilters({ ...userFilters, email: event.target.value })} />
+          </label>
+          <label>
+            Role
+            <select value={userFilters.role} onChange={(event) => setUserFilters({ ...userFilters, role: event.target.value })}>
+              <option value="">All roles</option>
+              <option value="student role 1">Student Role 1</option>
+              <option value="student role 2">Student Role 2</option>
+              <option value="student role 3">Student Role 3</option>
+              <option value="staff">Staff</option>
+              <option value="professor">Professor</option>
+              <option value="security">Security</option>
+            </select>
+          </label>
+          <label>
+            License plate
+            <input value={userFilters.licensePlate} onChange={(event) => setUserFilters({ ...userFilters, licensePlate: event.target.value })} />
+          </label>
+          <div className="action-row align-start">
+            <button className="secondary-button" type="submit">Search users</button>
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => {
+                const cleared = { name: "", email: "", role: "", licensePlate: "" };
+                setUserFilters(cleared);
+                onSearchUsers(cleared);
+              }}
+            >
+              Clear search
+            </button>
+          </div>
+        </form>
+        <div className="user-list">
+          {users.map((account) => (
+            <div className="user-row stacked-row" key={account.id}>
               <div>
-                <strong>{reservation.user_name} | {reservation.spot_code}</strong>
-                <p>{formatDateTime(reservation.start_time)} to {formatDateTime(reservation.end_time)}</p>
+                <strong>{account.name}</strong>
+                <p>{account.email}</p>
+                <p>{account.role} | {account.license_plates || "No license plate saved"}</p>
+                {account.profile_note ? <p>{account.profile_note}</p> : null}
               </div>
-              <div className="action-row">
-                <button className="mini-button success" onClick={() => onApprove(reservation.id)}>Approve</button>
-                <button className="mini-button danger" onClick={() => onReject(reservation.id)}>Reject</button>
+              <div className="user-control-stack">
+                <StatusPill value={account.status} />
+                <StatusPill value={account.role} />
+                <select
+                  value={account.role}
+                  onChange={(event) => onUpdateUserRole(account.id, event.target.value)}
+                >
+                  {roleRules.map((rule) => (
+                    <option key={rule.role_name} value={rule.role_name}>{rule.role_name}</option>
+                  ))}
+                </select>
+                <button
+                  className={account.status === "banned" ? "mini-button success" : "mini-button danger"}
+                  onClick={() => (account.status === "banned" ? onUnbanUser(account.id) : onBanUser(account.id))}
+                >
+                  {account.status === "banned" ? "Unban user" : "Ban user"}
+                </button>
               </div>
             </div>
           ))}
-          {!approvals.length ? <p className="empty-state">No pending approvals.</p> : null}
+          {!users.length ? <p className="empty-state">No users match the current search.</p> : null}
         </div>
-      </div>
-
-      <div className="panel">
-        <h3>Create staff or security account</h3>
+          </>
+        ) : (
+          <>
+        <h3>Create user account</h3>
         <form className="stack-form" onSubmit={(e) => {
           e.preventDefault();
           onCreateUser(userForm);
@@ -1176,48 +1381,68 @@ function AdminScreen({
           <label>
             Role
             <select value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}>
+              <option value="student role 1">Student Role 1</option>
+              <option value="student role 2">Student Role 2</option>
+              <option value="student role 3">Student Role 3</option>
               <option value="staff">Staff</option>
+              <option value="professor">Professor</option>
               <option value="security">Security</option>
             </select>
           </label>
           <button className="secondary-button" type="submit">Create account</button>
         </form>
-      </div>
+          </>
+        )}
+        </div>
+      ) : null}
 
-      <div className="panel">
-        <h3>Configuration</h3>
-        <form className="stack-form" onSubmit={(e) => {
-          e.preventDefault();
-          onSaveSettings(settingsForm);
-        }}>
+      {activeSection === "rules" ? (
+        <div className="panel">
+          <h3>Role scheduling rules</h3>
+          <form className="stack-form" onSubmit={(event) => {
+            event.preventDefault();
+            if (!selectedRoleRule) return;
+            onUpdateRoleRule(selectedRoleRule, roleRuleForm);
+          }}>
           <label>
-            Student max active reservations
-            <input type="number" value={settingsForm.studentMaxActiveReservations} onChange={(e) => setSettingsForm({ ...settingsForm, studentMaxActiveReservations: Number(e.target.value) })} />
+            Choose role
+            <select value={selectedRoleRule} onChange={(event) => setSelectedRoleRule(event.target.value)}>
+              {roleRules.map((rule) => (
+                <option key={rule.role_name} value={rule.role_name}>{rule.role_name}</option>
+              ))}
+            </select>
+          </label>
+          <p className="helper-text">Current rights for selected role are shown below. Change values and save.</p>
+          <label>
+            Max days ahead
+            <input type="number" min={0} max={365} value={roleRuleForm.maxDaysAhead} onChange={(event) => setRoleRuleForm({ ...roleRuleForm, maxDaysAhead: Number(event.target.value) })} />
           </label>
           <label>
-            Student max hours
-            <input type="number" value={settingsForm.studentMaxHours} onChange={(e) => setSettingsForm({ ...settingsForm, studentMaxHours: Number(e.target.value) })} />
+            Active reservations per day
+            <input type="number" min={0} max={20} value={roleRuleForm.maxDailyActiveReservations} onChange={(event) => setRoleRuleForm({ ...roleRuleForm, maxDailyActiveReservations: event.target.value })} placeholder="Leave empty for no daily cap" />
           </label>
           <label>
-            Staff max hours
-            <input type="number" value={settingsForm.staffMaxHours} onChange={(e) => setSettingsForm({ ...settingsForm, staffMaxHours: Number(e.target.value) })} />
+            Max reservation hours
+            <input type="number" min={1} max={24} value={roleRuleForm.maxReservationHours} onChange={(event) => setRoleRuleForm({ ...roleRuleForm, maxReservationHours: event.target.value })} placeholder="Leave empty for app default" />
           </label>
           <label>
-            Default reservation mode
-            <select value={settingsForm.defaultReservationMode} onChange={(e) => setSettingsForm({ ...settingsForm, defaultReservationMode: e.target.value })}>
+            Reservation approval mode
+            <select value={roleRuleForm.approvalMode} onChange={(event) => setRoleRuleForm({ ...roleRuleForm, approvalMode: event.target.value })}>
               <option value="pending">Pending approval</option>
               <option value="approved">Auto-approved</option>
             </select>
           </label>
-          <label className="toggle-label">
-            <input type="checkbox" checked={settingsForm.requireAdminApproval} onChange={(e) => setSettingsForm({ ...settingsForm, requireAdminApproval: e.target.checked })} />
-            Require admin approval
+          <label>
+            Role description
+            <input maxLength={120} value={roleRuleForm.roleDescription} onChange={(event) => setRoleRuleForm({ ...roleRuleForm, roleDescription: event.target.value })} />
           </label>
-          <button className="primary-button" type="submit">Save settings</button>
+          <button className="primary-button" type="submit">Save role rules</button>
         </form>
-      </div>
+        </div>
+      ) : null}
 
-      <div className="panel">
+      {activeSection === "parkings" ? (
+        <div className="panel">
         <h3>Add parking spot</h3>
         <form className="stack-form" onSubmit={(e) => {
           e.preventDefault();
@@ -1233,7 +1458,6 @@ function AdminScreen({
             <select value={spotForm.side} onChange={(e) => setSpotForm({ ...spotForm, side: e.target.value })}>
               <option value="left">Left</option>
               <option value="right">Right</option>
-              <option value="entrance">Entrance</option>
             </select>
           </label>
           <label>
@@ -1253,46 +1477,124 @@ function AdminScreen({
           </label>
           <button className="secondary-button" type="submit">Add spot</button>
         </form>
-      </div>
-
-      <div className="panel">
-        <h3>Users</h3>
-        <div className="user-list">
-          {users.map((account) => (
-            <div className="user-row" key={account.id}>
+        <div className="section-heading">
+          <h3>Pending approvals</h3>
+          <p>Review and decide reservation requests.</p>
+        </div>
+        <div className="reservation-list">
+          {approvals.map((reservation) => (
+            <div className="reservation-card" key={reservation.id}>
               <div>
-                <strong>{account.name}</strong>
-                <p>{account.email}</p>
+                <strong>{reservation.user_name} | {reservation.spot_code}</strong>
+                <p>{formatDateTime(reservation.start_time)} to {formatDateTime(reservation.end_time)}</p>
               </div>
-              <div className="user-control-stack">
-                <StatusPill value={account.role} />
-                <select
-                  value={account.approval_mode_override || "default"}
-                  onChange={(event) => onUpdateUserApprovalMode(account.id, event.target.value)}
-                >
-                  <option value="default">Use default</option>
-                  <option value="pending">Pending approval</option>
-                  <option value="approved">Auto-approved</option>
-                </select>
+              <div className="action-row">
+                <button className="mini-button success" onClick={() => onApprove(reservation.id)}>Approve</button>
+                <button className="mini-button danger" onClick={() => onReject(reservation.id)}>Reject</button>
               </div>
             </div>
           ))}
+          {!approvals.length ? <p className="empty-state">No pending approvals.</p> : null}
         </div>
+        </div>
+      ) : null}
+
+      {activeSection === "reports" ? (
+        <div className="panel">
+        <h3>Occupied spot reports</h3>
+        <div className="reservation-list">
+          {reports.map((report) => (
+            <div className="reservation-card" key={report.id}>
+              <div>
+                <strong>{report.reported_by_name || "Unknown user"} | {report.spot_code}</strong>
+                <p>{formatDateTime(report.reported_at)}</p>
+                <p>{report.description || "No description provided"}</p>
+                <p>{report.license_plate || "No license plate provided"}</p>
+                <small>{report.lot_type} parking lot</small>
+              </div>
+              <StatusPill value="reported" />
+            </div>
+          ))}
+          {!reports.length ? <p className="empty-state">No spot reports yet.</p> : null}
+        </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ProfileScreen({ user, settings, onResendVerification, onSaveProfile, onLogout }) {
+  const [form, setForm] = useState({
+    licensePlates: user.license_plates || "",
+    profileNote: user.profile_note || ""
+  });
+
+  useEffect(() => {
+    setForm({
+      licensePlates: user.license_plates || "",
+      profileNote: user.profile_note || ""
+    });
+  }, [user]);
+
+  return (
+    <div className="screen">
+      <div className="panel">
+        <h3>Profile</h3>
+        <p><strong>Name:</strong> {user.name}</p>
+        <p><strong>Email:</strong> {user.email}</p>
+        <p><strong>Role:</strong> {user.role}</p>
+        <p><strong>Status:</strong> {user.status}</p>
+        <p><strong>Email verification:</strong> {user.is_verified === false ? "Not verified yet" : "Verified"}</p>
+      </div>
+
+      {user.is_verified === false ? (
+        <div className="panel">
+          <h3>Verify Email</h3>
+          <p>A verified AUK email is required before you can reserve a parking spot.</p>
+          <button className="secondary-button full-width" onClick={onResendVerification}>
+            Resend verification email
+          </button>
+        </div>
+      ) : null}
+
+      <div className="panel">
+        <h3>{isStudentRole(user.role) ? "Vehicle details" : "Staff / professor details"}</h3>
+        <form className="stack-form" onSubmit={(event) => {
+          event.preventDefault();
+          onSaveProfile(form);
+        }}>
+          <label>
+            License plate(s)
+            <input
+              value={form.licensePlates}
+              onChange={(event) => setForm({ ...form, licensePlates: event.target.value })}
+              placeholder="Example: ABC-123, XYZ-456"
+            />
+          </label>
+          <p className="helper-text">Up to 5 plates, max 10 characters each. Separate multiple plates with commas.</p>
+          <label>
+            {isStudentRole(user.role) ? "Profile note" : "Description / note"}
+            <input
+              value={form.profileNote}
+              onChange={(event) => setForm({ ...form, profileNote: event.target.value })}
+              placeholder="Optional"
+            />
+          </label>
+          <button className="secondary-button" type="submit">Save profile</button>
+        </form>
       </div>
 
       <div className="panel">
-        <h3>Spot inventory</h3>
-        <div className="user-list">
-          {spots.map((spot) => (
-            <div className="user-row" key={spot.id}>
-              <div>
-                <strong>{spot.code}</strong>
-                <p>{spot.side} | {spot.lot_type} | {spot.type}</p>
-              </div>
-              <StatusPill value={spotVisualStatus(spot)} />
-            </div>
-          ))}
-        </div>
+        <h3>Booking privileges</h3>
+        <p><strong>Active booking limit:</strong> {isStudentRole(user.role) ? `${settings.student_max_active_reservations ?? 5} active bookings` : "Not limited by student cap"}</p>
+        <p><strong>Single reservation length:</strong> {isStudentRole(user.role) ? `${settings.student_max_hours ?? 6} hours max` : `${settings.staff_max_hours ?? 12} hours max`}</p>
+        <p><strong>Recurring reservations:</strong> {isStudentRole(user.role) ? "Not available" : "Available"}</p>
+        <p><strong>Approval rights:</strong> {isAdminRole(user.role) ? "Can approve and reject reservations" : "No approval access"}</p>
+        <p><strong>Spot management:</strong> {isAdminRole(user.role) ? "Can manage parking spots" : "View and reserve only"}</p>
+      </div>
+
+      <div className="panel">
+        <button className="primary-button full-width" onClick={onLogout}>Logout</button>
       </div>
     </div>
   );
@@ -1309,7 +1611,8 @@ export default function App() {
   const [reservations, setReservations] = useState([]);
   const [recurringReservations, setRecurringReservations] = useState([]);
   const [users, setUsers] = useState([]);
-  const [dashboard, setDashboard] = useState({});
+  const [spotReports, setSpotReports] = useState([]);
+  const [roleRules, setRoleRules] = useState([]);
   const [approvals, setApprovals] = useState([]);
   const [settings, setSettings] = useState({});
   const [message, setMessage] = useState("");
@@ -1334,19 +1637,23 @@ export default function App() {
       setReservations(reservationData);
       setRecurringReservations(recurringData);
 
-      if (currentUser.role === "security") {
-        const [dashboardData, approvalsData, usersData, settingsData] = await Promise.all([
-          api.dashboard(),
+      if (isAdminRole(currentUser.role)) {
+        const [approvalsData, usersData, settingsData, reportsData, roleRulesData] = await Promise.all([
           api.approvals(),
           api.users(),
-          api.settings()
+          api.settings(),
+          api.spotReports(),
+          api.roleRules()
         ]);
-        setDashboard(dashboardData);
         setApprovals(approvalsData);
         setUsers(usersData);
         setSettings(settingsData);
+        setSpotReports(reportsData);
+        setRoleRules(roleRulesData);
       } else {
         setSettings(await api.publicSettings().catch(() => ({ student_max_active_reservations: 5 })));
+        setSpotReports([]);
+        setRoleRules([]);
       }
     } catch (requestError) {
       setError(requestError.message);
@@ -1403,7 +1710,7 @@ export default function App() {
     }
   }, [user]);
 
-  const visibleReservations = useMemo(() => reservations.filter((item) => ["pending", "approved"].includes(item.status)), [reservations]);
+  const visibleReservations = useMemo(() => reservations, [reservations]);
   async function handleCreateReservation(payload) {
     setError("");
     const response = await api.createReservation(payload);
@@ -1444,10 +1751,9 @@ export default function App() {
     await loadData();
   }
 
-  async function handleSaveSettings(payload) {
-    await api.updateSettings(payload);
-    setMessage("Settings updated.");
-    await loadData();
+  async function handleSearchUsers(filters) {
+    const results = await api.users(filters);
+    setUsers(results);
   }
 
   async function handleCreateSpot(payload) {
@@ -1456,9 +1762,33 @@ export default function App() {
     await loadData();
   }
 
-  async function handleUpdateUserApprovalMode(userId, approvalModeOverride) {
-    await api.updateUserApprovalMode(userId, { approvalModeOverride });
-    setMessage("User approval mode updated.");
+  async function handleUpdateUserRole(userId, role) {
+    await api.updateUserRole(userId, { role });
+    setMessage("User role updated.");
+    await loadData();
+  }
+
+  async function handleUpdateRoleRule(roleName, payload) {
+    await api.updateRoleRule(roleName, payload);
+    setMessage("Role scheduling rule updated.");
+    await loadData();
+  }
+
+  async function handleCreateSpotReport(payload) {
+    await api.createSpotReport(payload);
+    setMessage("Spot report submitted.");
+    await loadData();
+  }
+
+  async function handleBanUser(userId) {
+    await api.banUser(userId);
+    setMessage("User banned from new reservations.");
+    await loadData();
+  }
+
+  async function handleUnbanUser(userId) {
+    await api.unbanUser(userId);
+    setMessage("User ban removed.");
     await loadData();
   }
 
@@ -1467,6 +1797,27 @@ export default function App() {
     setMessage("Spot updated.");
     await loadData();
     return updated;
+  }
+
+  async function handleSaveProfile(profile) {
+    const plates = String(profile.licensePlates || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (plates.length > 5) {
+      setError("You can save up to 5 license plates.");
+      return;
+    }
+    if (plates.some((plate) => plate.length > 10)) {
+      setError("Each license plate must be 10 characters or fewer.");
+      return;
+    }
+
+    const updatedUser = await api.updateMe(profile);
+    setUser((current) => ({ ...current, ...updatedUser }));
+    saveSession(localStorage.getItem("auk-token"), { ...user, ...updatedUser });
+    setMessage("Profile updated.");
+    setError("");
   }
 
   async function handleResendVerification() {
@@ -1483,6 +1834,8 @@ export default function App() {
     setReservations([]);
     setRecurringReservations([]);
     setUsers([]);
+    setSpotReports([]);
+    setRoleRules([]);
     setApprovals([]);
     setDashboard({});
     setSettings({});
@@ -1534,7 +1887,7 @@ export default function App() {
     );
   }
 
-  const tabs = navByRole[user.role];
+  const tabs = getTabsForRole(user.role);
   const footer = (
     <nav className="bottom-nav" style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}>
       {tabs.map((tab) => (
@@ -1551,63 +1904,46 @@ export default function App() {
       {error ? <div className="banner error">{error}</div> : null}
 
       {activeTab === "map" ? (
-        user.role === "security"
-          ? <SecurityMapScreen user={user} spots={spots} onCreateReservation={handleCreateReservation} onCreateRecurring={handleCreateRecurring} onUpdateSpot={handleUpdateSpot} />
+        isAdminRole(user.role)
+          ? <SecurityMapScreen user={user} spots={spots} onCreateReservation={handleCreateReservation} onCreateRecurring={handleCreateRecurring} onUpdateSpot={handleUpdateSpot} onReportSpot={handleCreateSpotReport} />
           : <LotReservationScreen user={user} settings={settings} onCreateReservation={handleCreateReservation} onCreateRecurring={handleCreateRecurring} />
       ) : null}
       {activeTab === "reservations" ? (
         <div className="screen">
-          <ReservationList title="Active reservations" reservations={visibleReservations} onCancel={handleCancelReservation} showUser={user.role === "security"} />
+          <ReservationList
+            title="My bookings"
+            reservations={visibleReservations}
+            onCancel={handleCancelReservation}
+            onReport={!isAdminRole(user.role) ? handleCreateSpotReport : undefined}
+            showUser={isAdminRole(user.role)}
+          />
           {recurringReservations.length ? <ReservationList title="Recurring reservations" reservations={recurringReservations.map((item) => ({ ...item, spot_code: item.spot_code, status: item.status }))} /> : null}
         </div>
       ) : null}
       {activeTab === "profile" ? (
-        <div className="screen">
-          <div className="panel">
-            <h3>Profile</h3>
-            <p><strong>Name:</strong> {user.name}</p>
-            <p><strong>Email:</strong> {user.email}</p>
-            <p><strong>Role:</strong> {user.role}</p>
-            <p><strong>Email verification:</strong> {user.is_verified === false ? "Not verified yet" : "Verified"}</p>
-          </div>
-
-          {user.is_verified === false ? (
-            <div className="panel">
-              <h3>Verify Email</h3>
-              <p>A verified AUK email is required before you can reserve a parking spot.</p>
-              <button className="secondary-button full-width" onClick={handleResendVerification}>
-                Resend verification email
-              </button>
-            </div>
-          ) : null}
-
-          <div className="panel">
-            <h3>Booking privileges</h3>
-            <p><strong>Active booking limit:</strong> {user.role === "student" ? `${settings.student_max_active_reservations ?? 5} active bookings` : "Not limited by student cap"}</p>
-            <p><strong>Single reservation length:</strong> {user.role === "student" ? `${settings.student_max_hours ?? 6} hours max` : `${settings.staff_max_hours ?? 12} hours max`}</p>
-            <p><strong>Recurring reservations:</strong> {user.role === "student" ? "Not available" : "Available"}</p>
-            <p><strong>Approval rights:</strong> {user.role === "security" ? "Can approve and reject reservations" : "No approval access"}</p>
-            <p><strong>Spot management:</strong> {user.role === "security" ? "Can manage parking spots" : "View and reserve only"}</p>
-          </div>
-
-          <div className="panel">
-            <button className="primary-button full-width" onClick={handleLogout}>Logout</button>
-          </div>
-        </div>
+        <ProfileScreen
+          user={user}
+          settings={settings}
+          onResendVerification={handleResendVerification}
+          onSaveProfile={handleSaveProfile}
+          onLogout={handleLogout}
+        />
       ) : null}
-      {activeTab === "admin" && user.role === "security" ? (
+      {activeTab === "admin" && isAdminRole(user.role) ? (
         <AdminScreen
-          dashboard={dashboard}
           users={users}
           approvals={approvals}
-          settings={settings}
+          reports={spotReports}
+          roleRules={roleRules}
           onApprove={handleApprove}
           onReject={handleReject}
           onCreateUser={handleCreateUser}
-          onSaveSettings={handleSaveSettings}
+          onSearchUsers={handleSearchUsers}
           onCreateSpot={handleCreateSpot}
-          onUpdateUserApprovalMode={handleUpdateUserApprovalMode}
-          spots={spots}
+          onBanUser={handleBanUser}
+          onUnbanUser={handleUnbanUser}
+          onUpdateUserRole={handleUpdateUserRole}
+          onUpdateRoleRule={handleUpdateRoleRule}
         />
       ) : null}
     </PhoneShell>

@@ -1,15 +1,44 @@
 import express from "express";
 import { authenticate, authorize } from "../middleware/auth.js";
 import { hashPassword } from "../utils/password.js";
+import { roleSortWeight } from "../utils/roles.js";
 
 const router = express.Router();
 
 router.get("/", authenticate, authorize("security"), (req, res) => {
+  const name = String(req.query.name || "").trim().toLowerCase();
+  const email = String(req.query.email || "").trim().toLowerCase();
+  const role = String(req.query.role || "").trim().toLowerCase();
+  const licensePlate = String(req.query.licensePlate || "").trim().toLowerCase();
+
   const users = req.db.prepare(`
-    SELECT id, name, email, role, status, is_verified, approval_mode_override, created_at
+    SELECT
+      users.id,
+      users.name,
+      users.email,
+      users.role,
+      users.status,
+      users.is_verified,
+      users.license_plates,
+      users.profile_note,
+      users.approval_mode_override,
+      users.created_at,
+      COALESCE(role_scheduling_rules.max_days_ahead, 10) AS role_max_days_ahead,
+      COALESCE(role_scheduling_rules.role_description, '') AS role_description
     FROM users
-    ORDER BY role DESC, created_at DESC
-  `).all();
+    LEFT JOIN role_scheduling_rules ON role_scheduling_rules.role_name = users.role
+    WHERE (? = '' OR lower(name) LIKE '%' || ? || '%')
+      AND (? = '' OR lower(email) LIKE '%' || ? || '%')
+      AND (? = '' OR lower(role) = ?)
+      AND (? = '' OR lower(license_plates) LIKE '%' || ? || '%')
+    ORDER BY created_at DESC
+  `).all(name, name, email, email, role, role, licensePlate, licensePlate)
+    .sort((first, second) => {
+      const firstWeight = roleSortWeight(first.role);
+      const secondWeight = roleSortWeight(second.role);
+      if (firstWeight !== secondWeight) return firstWeight - secondWeight;
+      return new Date(second.created_at).getTime() - new Date(first.created_at).getTime();
+    });
   res.json(users);
 });
 
@@ -19,10 +48,6 @@ router.post("/", authenticate, authorize("security"), (req, res) => {
 
   if (!name || !normalizedEmail || !password) {
     return res.status(400).json({ message: "Name, email, and password are required." });
-  }
-
-  if (!["staff", "security"].includes(role)) {
-    return res.status(400).json({ message: "Security can only create staff or security accounts here." });
   }
 
   const existing = req.db.prepare("SELECT id FROM users WHERE email = ?").get(normalizedEmail);
@@ -35,14 +60,69 @@ router.post("/", authenticate, authorize("security"), (req, res) => {
     VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, 'active')
   `).run(name.trim(), normalizedEmail, hashPassword(password), role);
 
-  const user = req.db.prepare("SELECT id, name, email, role, status, is_verified FROM users WHERE id = ?").get(result.lastInsertRowid);
+  req.db.prepare(`
+    INSERT INTO role_scheduling_rules (role_name, max_days_ahead, role_description, updated_at)
+    VALUES (?, 10, '', CURRENT_TIMESTAMP)
+    ON CONFLICT(role_name) DO NOTHING
+  `).run(role);
+
+  const user = req.db.prepare(`
+    SELECT id, name, email, role, status, is_verified, license_plates, profile_note
+    FROM users
+    WHERE id = ?
+  `).get(result.lastInsertRowid);
   res.status(201).json(user);
 });
 
 router.patch("/:id/status", authenticate, authorize("security"), (req, res) => {
   const { status } = req.body;
   req.db.prepare("UPDATE users SET status = ? WHERE id = ?").run(status || "active", req.params.id);
-  const user = req.db.prepare("SELECT id, name, email, role, status, is_verified, approval_mode_override FROM users WHERE id = ?").get(req.params.id);
+  const user = req.db.prepare(`
+    SELECT id, name, email, role, status, is_verified, license_plates, profile_note, approval_mode_override
+    FROM users
+    WHERE id = ?
+  `).get(req.params.id);
+  res.json(user);
+});
+
+router.patch("/:id/ban", authenticate, authorize("security"), (req, res) => {
+  req.db.prepare("UPDATE users SET status = 'banned' WHERE id = ?").run(req.params.id);
+  const user = req.db.prepare(`
+    SELECT id, name, email, role, status, is_verified, license_plates, profile_note, approval_mode_override
+    FROM users
+    WHERE id = ?
+  `).get(req.params.id);
+  res.json(user);
+});
+
+router.patch("/:id/unban", authenticate, authorize("security"), (req, res) => {
+  req.db.prepare("UPDATE users SET status = 'active' WHERE id = ?").run(req.params.id);
+  const user = req.db.prepare(`
+    SELECT id, name, email, role, status, is_verified, license_plates, profile_note, approval_mode_override
+    FROM users
+    WHERE id = ?
+  `).get(req.params.id);
+  res.json(user);
+});
+
+router.patch("/:id/role", authenticate, authorize("security"), (req, res) => {
+  const role = String(req.body?.role || "").trim();
+  if (!role) {
+    return res.status(400).json({ message: "Role is required." });
+  }
+
+  req.db.prepare("UPDATE users SET role = ? WHERE id = ?").run(role, req.params.id);
+  req.db.prepare(`
+    INSERT INTO role_scheduling_rules (role_name, max_days_ahead, role_description, updated_at)
+    VALUES (?, 10, '', CURRENT_TIMESTAMP)
+    ON CONFLICT(role_name) DO NOTHING
+  `).run(role);
+
+  const user = req.db.prepare(`
+    SELECT id, name, email, role, status, is_verified, license_plates, profile_note, approval_mode_override
+    FROM users
+    WHERE id = ?
+  `).get(req.params.id);
   res.json(user);
 });
 
@@ -55,7 +135,11 @@ router.patch("/:id/approval-mode", authenticate, authorize("security"), (req, re
   }
 
   req.db.prepare("UPDATE users SET approval_mode_override = ? WHERE id = ?").run(normalizedValue, req.params.id);
-  const user = req.db.prepare("SELECT id, name, email, role, status, is_verified, approval_mode_override FROM users WHERE id = ?").get(req.params.id);
+  const user = req.db.prepare(`
+    SELECT id, name, email, role, status, is_verified, license_plates, profile_note, approval_mode_override
+    FROM users
+    WHERE id = ?
+  `).get(req.params.id);
   res.json(user);
 });
 

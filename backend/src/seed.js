@@ -10,8 +10,8 @@ function mustGet(db, query, param, label) {
 
 export function ensureDemoUsers(targetDb) {
   const insert = targetDb.prepare(`
-    INSERT INTO users (name, email, password_hash, role, is_verified, verified_at, status)
-    VALUES (?, ?, ?, ?, 1, CURRENT_TIMESTAMP, 'active')
+    INSERT INTO users (name, email, password_hash, role, license_plates, profile_note, is_verified, verified_at, status)
+    VALUES (?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP, 'active')
   `);
 
   targetDb.prepare(`
@@ -20,23 +20,26 @@ export function ensureDemoUsers(targetDb) {
   `).run();
 
   [
-    ["Security Admin", "security@auk.org", "Admin123!", "security"],
-    ["Staff One", "staff1@auk.org", "Staff123!", "staff"],
-    ["Staff Two", "staff2@auk.org", "Staff123!", "staff"],
-    ["Student One", "student1@auk.org", "Student123!", "student"]
-  ].forEach(([name, email, password, role]) => {
+    ["Security Admin", "security@auk.org", "Admin123!", "security", "SEC-001", "Security dashboard demo account."],
+    ["Staff One", "staff1@auk.org", "Staff123!", "staff", "STF-101, STF-102", "Professor parking profile with two registered vehicles."],
+    ["Staff Two", "staff2@auk.org", "Staff123!", "staff", "STF-201", "Staff account used for recurring reservation examples."],
+    ["Student One", "student1@auk.org", "Student123!", "student role 1", "STD-001", ""]
+  ].forEach(([name, email, password, role, licensePlates, profileNote]) => {
     const existingUser = targetDb.prepare("SELECT id FROM users WHERE email = ?").get(email);
     if (!existingUser) {
-      insert.run(name, email, hashPassword(password), role);
+      insert.run(name, email, hashPassword(password), role, licensePlates, profileNote);
     } else {
       targetDb.prepare(`
         UPDATE users
         SET is_verified = 1,
+            role = ?,
+            license_plates = ?,
+            profile_note = ?,
             verification_token_hash = NULL,
             verification_expires_at = NULL,
             verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP)
         WHERE email = ?
-      `).run(email);
+      `).run(role, licensePlates, profileNote, email);
     }
   });
 }
@@ -65,12 +68,9 @@ function seedSpots(targetDb) {
     insert.run(`L-${String(index).padStart(2, "0")}`, "left", "standard", "general", 1, "");
   }
 
-  for (let index = 1; index <= 18; index += 1) {
+  for (let index = 1; index <= 20; index += 1) {
     insert.run(`R-${String(index).padStart(2, "0")}`, "right", "standard", "staff", 1, "");
   }
-
-  insert.run("E-01", "entrance", "accessible", "general", 1, "Accessible parking near the entrance.");
-  insert.run("E-02", "entrance", "vip", "staff", 0, "Temporarily unavailable for maintenance.");
 }
 
 function seedReservations(targetDb) {

@@ -1,4 +1,5 @@
 import { hasOverlap, isFutureRange, isHalfHourIncrement } from "../utils/time.js";
+import { isAdminRole, isStaffLikeRole, isStudentRole, isStudentRoleLevel1 } from "../utils/roles.js";
 
 function httpError(status, message) {
   const error = new Error(message);
@@ -12,8 +13,17 @@ function getSettings(db) {
 
 function getUserRecord(db, userId) {
   return db.prepare(`
-    SELECT id, role, is_verified, approval_mode_override
+    SELECT
+      users.id,
+      users.role,
+      users.is_verified,
+      users.status,
+      users.approval_mode_override,
+      COALESCE(role_scheduling_rules.max_days_ahead, 10) AS max_days_ahead,
+      role_scheduling_rules.max_daily_active_reservations,
+      role_scheduling_rules.max_reservation_hours
     FROM users
+    LEFT JOIN role_scheduling_rules ON role_scheduling_rules.role_name = users.role
     WHERE id = ?
   `).get(userId);
 }
@@ -42,9 +52,18 @@ function parseClockToMinutes(clockValue) {
 }
 
 function getUserApprovalMode(db, actor, settings) {
-  const userRecord = db.prepare("SELECT approval_mode_override FROM users WHERE id = ?").get(actor.id);
-  if (actor.role === "security") {
+  const userRecord = db.prepare(`
+    SELECT users.approval_mode_override, role_scheduling_rules.approval_mode
+    FROM users
+    LEFT JOIN role_scheduling_rules ON role_scheduling_rules.role_name = users.role
+    WHERE users.id = ?
+  `).get(actor.id);
+  if (isAdminRole(actor.role)) {
     return "approved";
+  }
+
+  if (userRecord?.approval_mode) {
+    return userRecord.approval_mode;
   }
 
   if (userRecord?.approval_mode_override) {
@@ -60,10 +79,56 @@ function getUserApprovalMode(db, actor, settings) {
 
 function isLotTypeAllowed(actor, lotType) {
   if (!lotType) return true;
-  if (actor.role === "security") return true;
-  if (actor.role === "student") return lotType === "general";
-  if (actor.role === "staff") return ["general", "staff"].includes(lotType);
+  if (isAdminRole(actor.role)) return true;
+  if (isStudentRole(actor.role)) return lotType === "general";
+  if (isStaffLikeRole(actor.role)) return ["general", "staff"].includes(lotType);
   return false;
+}
+
+function getRoleMaxDaysAhead(userRecord) {
+  return Number(userRecord?.max_days_ahead || 10);
+}
+
+function getDayEndIso(dateValue) {
+  return `${dateValue}T23:59:59.999Z`;
+}
+
+function validateDaysAheadLimit(actor, userRecord, startTime) {
+  if (isAdminRole(actor.role)) {
+    return;
+  }
+
+  const selectedDate = startTime.slice(0, 10);
+  const maxDaysAhead = getRoleMaxDaysAhead(userRecord);
+  const now = new Date();
+  const latestAllowed = new Date(now);
+  latestAllowed.setHours(23, 59, 59, 999);
+  latestAllowed.setDate(latestAllowed.getDate() + maxDaysAhead);
+  const selectedEnd = new Date(getDayEndIso(selectedDate));
+
+  if (selectedEnd.getTime() > latestAllowed.getTime()) {
+    throw httpError(400, `Your role can reserve up to ${maxDaysAhead} day(s) ahead.`);
+  }
+}
+
+function countRoleLevelOneActiveReservationsForDay(db, userId, dateValue) {
+  return db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM reservations
+    WHERE user_id = ?
+      AND status IN ('pending', 'approved')
+      AND date(start_time) = date(?)
+  `).get(userId, dateValue).count;
+}
+
+function countActiveReservationsForDay(db, userId, dateValue) {
+  return db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM reservations
+    WHERE user_id = ?
+      AND status IN ('pending', 'approved')
+      AND date(start_time) = date(?)
+  `).get(userId, dateValue).count;
 }
 
 function findAvailableSpot(db, actor, lotType, startTime, endTime) {
@@ -123,6 +188,16 @@ function createAuditLog(db, actorUserId, action, entityType, entityId, details =
   `).run(actorUserId || null, action, entityType, entityId || null, details);
 }
 
+function ensureReservationAllowed(actor, userRecord) {
+  if (userRecord?.status === "banned" && !isAdminRole(actor.role)) {
+    throw httpError(403, "Your account is currently banned from making reservations.");
+  }
+
+  if (!isAdminRole(actor.role) && !userRecord?.is_verified) {
+    throw httpError(403, "Verify your email before reserving a parking spot.");
+  }
+}
+
 export function createReservation(db, actor, payload) {
   const { spotId, startTime, endTime, lotType, startClock, endClock } = payload;
   const settings = getSettings(db);
@@ -154,15 +229,13 @@ export function createReservation(db, actor, payload) {
   const durationMinutes =
     (new Date(endTime).getTime() - new Date(startTime).getTime()) / (1000 * 60);
 
-  if (actor.role !== "security" && !userRecord?.is_verified) {
-    throw httpError(403, "Verify your email before reserving a parking spot.");
+  ensureReservationAllowed(actor, userRecord);
+
+  if (!isAdminRole(actor.role) && durationMinutes < 60) {
+    throw httpError(400, "Reservations must be at least 1 hour.");
   }
 
-  if (actor.role !== "security" && durationMinutes < 90) {
-    throw httpError(400, "Reservations must be at least 90 minutes.");
-  }
-
-  if (actor.role === "student") {
+  if (isStudentRole(actor.role)) {
     const startMinutes = parseClockToMinutes(startClock);
     const endMinutes = parseClockToMinutes(endClock);
 
@@ -179,20 +252,43 @@ export function createReservation(db, actor, payload) {
     }
   }
 
-  if (actor.role === "student" && durationHours > settings.student_max_hours) {
-    throw httpError(400, `Students may only reserve up to ${settings.student_max_hours} hours.`);
-  }
+  validateDaysAheadLimit(actor, userRecord, startTime);
 
-  if (actor.role === "staff" && durationHours > settings.staff_max_hours) {
+  const roleMaxHours = userRecord?.max_reservation_hours;
+  if (roleMaxHours !== null && roleMaxHours !== undefined) {
+    if (durationHours > Number(roleMaxHours)) {
+      throw httpError(400, `Your role allows up to ${roleMaxHours} hour(s) per reservation.`);
+    }
+  } else if (isStudentRole(actor.role) && durationHours > settings.student_max_hours) {
+    throw httpError(400, `Students may only reserve up to ${settings.student_max_hours} hours.`);
+  } else if (isStaffLikeRole(actor.role) && durationHours > settings.staff_max_hours) {
     throw httpError(400, `Staff may only reserve up to ${settings.staff_max_hours} hours.`);
   }
 
-  if (actor.role === "student" && countActiveReservations(db, actor.id) >= settings.student_max_active_reservations) {
+  if (isStudentRole(actor.role) && countActiveReservations(db, actor.id) >= settings.student_max_active_reservations) {
     throw httpError(400, `Students may only have ${settings.student_max_active_reservations} active reservations.`);
   }
 
+  const dailyRoleLimit = userRecord?.max_daily_active_reservations;
+  if (dailyRoleLimit !== null && dailyRoleLimit !== undefined) {
+    const dateValue = startTime.slice(0, 10);
+    const activeForDay = countActiveReservationsForDay(db, actor.id, dateValue);
+    if (activeForDay >= Number(dailyRoleLimit)) {
+      throw httpError(400, `Your role can only have ${dailyRoleLimit} active reservation(s) per day.`);
+    }
+  } else if (isStudentRoleLevel1(actor.role)) {
+    if (durationHours > 2) {
+      throw httpError(400, "Student role 1 reservations are limited to 2 hours each.");
+    }
+    const dateValue = startTime.slice(0, 10);
+    const activeForDay = countRoleLevelOneActiveReservationsForDay(db, actor.id, dateValue);
+    if (activeForDay >= 2) {
+      throw httpError(400, "Student role 1 can only have 2 active reservations per day.");
+    }
+  }
+
   const conflictingReservation = getConflictingReservation(db, spot.id, startTime, endTime);
-  if (conflictingReservation && actor.role !== "security") {
+  if (conflictingReservation && !isAdminRole(actor.role)) {
     throw httpError(409, "This parking spot is already booked for the selected time.");
   }
 
@@ -213,7 +309,7 @@ export function createReservation(db, actor, payload) {
 }
 
 export function createRecurringReservation(db, actor, payload) {
-  if (!["staff", "security"].includes(actor.role)) {
+  if (!(isStaffLikeRole(actor.role) || isAdminRole(actor.role))) {
     throw httpError(403, "Only staff and security can create recurring reservations.");
   }
 
@@ -240,13 +336,13 @@ export function createRecurringReservation(db, actor, payload) {
   const durationMinutes =
     (new Date(endTime).getTime() - new Date(startTime).getTime()) / (1000 * 60);
 
-  if (actor.role !== "security" && !userRecord?.is_verified) {
-    throw httpError(403, "Verify your email before creating recurring reservations.");
+  ensureReservationAllowed(actor, userRecord);
+
+  if (!isAdminRole(actor.role) && durationMinutes < 60) {
+    throw httpError(400, "Recurring reservations must be at least 1 hour.");
   }
 
-  if (actor.role !== "security" && durationMinutes < 90) {
-    throw httpError(400, "Recurring reservations must be at least 90 minutes.");
-  }
+  validateDaysAheadLimit(actor, userRecord, startTime);
 
   if (new Date(semesterStart).getTime() >= new Date(semesterEnd).getTime()) {
     throw httpError(400, "Semester end date must be after semester start date.");
@@ -273,7 +369,7 @@ export function createRecurringReservation(db, actor, payload) {
 }
 
 export function updateReservationStatus(db, actor, reservationId, status, approvalNote = "") {
-  if (actor.role !== "security") {
+  if (!isAdminRole(actor.role)) {
     throw httpError(403, "Only security can approve or reject reservations.");
   }
 
@@ -299,7 +395,7 @@ export function cancelReservation(db, actor, reservationId) {
     throw httpError(404, "Reservation not found.");
   }
 
-  if (actor.role !== "security" && reservation.user_id !== actor.id) {
+  if (!isAdminRole(actor.role) && reservation.user_id !== actor.id) {
     throw httpError(403, "You can only cancel your own reservations.");
   }
 

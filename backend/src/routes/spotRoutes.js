@@ -13,6 +13,7 @@ router.get("/public-settings", (req, res) => {
 
 router.get("/", authenticate, (req, res) => {
   const selectedDate = req.query.date ? String(req.query.date) : null;
+  const lotType = req.query.lotType ? String(req.query.lotType) : "";
   const overlapStart = selectedDate ? `${selectedDate}T00:00:00.000Z` : null;
   const overlapEnd = selectedDate ? `${selectedDate}T23:59:59.999Z` : null;
 
@@ -30,11 +31,40 @@ router.get("/", authenticate, (req, res) => {
             ORDER BY reservations.start_time ASC
             LIMIT 1
           ) AS current_reservation_status
+          ,
+          (
+            SELECT users.name
+            FROM reservations
+            JOIN users ON users.id = reservations.user_id
+            WHERE reservations.spot_id = parking_spots.id
+              AND reservations.status IN ('pending', 'approved')
+              AND datetime(reservations.start_time) < datetime(?)
+              AND datetime(reservations.end_time) > datetime(?)
+            ORDER BY reservations.start_time ASC
+            LIMIT 1
+          ) AS current_reserved_by_name,
+          (
+            SELECT reservations.end_time
+            FROM reservations
+            WHERE reservations.spot_id = parking_spots.id
+              AND reservations.status IN ('pending', 'approved')
+              AND datetime(reservations.start_time) < datetime(?)
+              AND datetime(reservations.end_time) > datetime(?)
+            ORDER BY reservations.start_time ASC
+            LIMIT 1
+          ) AS current_reserved_until,
+          EXISTS(
+            SELECT 1
+            FROM spot_reports
+            WHERE spot_reports.spot_id = parking_spots.id
+              AND date(spot_reports.reported_at) = date(?)
+          ) AS is_reported_occupied
         FROM parking_spots
+        WHERE (? = '' OR parking_spots.lot_type = ?)
         ORDER BY
           CASE side WHEN 'left' THEN 1 WHEN 'right' THEN 2 ELSE 3 END,
           code
-      `).all(overlapEnd, overlapStart)
+      `).all(overlapEnd, overlapStart, overlapEnd, overlapStart, overlapEnd, overlapStart, selectedDate, lotType, lotType)
     : req.db.prepare(`
         SELECT
           parking_spots.*,
@@ -47,13 +77,84 @@ router.get("/", authenticate, (req, res) => {
             ORDER BY reservations.start_time ASC
             LIMIT 1
           ) AS current_reservation_status
+          ,
+          (
+            SELECT users.name
+            FROM reservations
+            JOIN users ON users.id = reservations.user_id
+            WHERE reservations.spot_id = parking_spots.id
+              AND reservations.status IN ('pending', 'approved')
+              AND datetime(reservations.end_time) >= datetime('now')
+            ORDER BY reservations.start_time ASC
+            LIMIT 1
+          ) AS current_reserved_by_name,
+          (
+            SELECT reservations.end_time
+            FROM reservations
+            WHERE reservations.spot_id = parking_spots.id
+              AND reservations.status IN ('pending', 'approved')
+              AND datetime(reservations.end_time) >= datetime('now')
+            ORDER BY reservations.start_time ASC
+            LIMIT 1
+          ) AS current_reserved_until,
+          EXISTS(
+            SELECT 1
+            FROM spot_reports
+            WHERE spot_reports.spot_id = parking_spots.id
+              AND date(spot_reports.reported_at) = date('now')
+          ) AS is_reported_occupied
         FROM parking_spots
+        WHERE (? = '' OR parking_spots.lot_type = ?)
         ORDER BY
           CASE side WHEN 'left' THEN 1 WHEN 'right' THEN 2 ELSE 3 END,
           code
-      `).all();
+      `).all(lotType, lotType);
 
   res.json(spots);
+});
+
+router.post("/reports", authenticate, (req, res) => {
+  const { spotId, licensePlate = "", description = "" } = req.body;
+  const spot = req.db.prepare("SELECT id, code, lot_type FROM parking_spots WHERE id = ?").get(spotId);
+
+  if (!spot) {
+    return res.status(404).json({ message: "Parking spot not found." });
+  }
+
+  const result = req.db.prepare(`
+    INSERT INTO spot_reports (spot_id, reported_by_user_id, lot_type, license_plate, description)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(spot.id, req.user.id, spot.lot_type, String(licensePlate).trim(), String(description).trim());
+
+  const report = req.db.prepare(`
+    SELECT
+      spot_reports.*,
+      parking_spots.code AS spot_code,
+      users.name AS reported_by_name
+    FROM spot_reports
+    JOIN parking_spots ON parking_spots.id = spot_reports.spot_id
+    LEFT JOIN users ON users.id = spot_reports.reported_by_user_id
+    WHERE spot_reports.id = ?
+  `).get(result.lastInsertRowid);
+
+  res.status(201).json(report);
+});
+
+router.get("/reports", authenticate, authorize("security"), (req, res) => {
+  const lotType = String(req.query.lotType || "").trim();
+  const reports = req.db.prepare(`
+    SELECT
+      spot_reports.*,
+      parking_spots.code AS spot_code,
+      users.name AS reported_by_name
+    FROM spot_reports
+    JOIN parking_spots ON parking_spots.id = spot_reports.spot_id
+    LEFT JOIN users ON users.id = spot_reports.reported_by_user_id
+    WHERE (? = '' OR spot_reports.lot_type = ?)
+    ORDER BY datetime(spot_reports.reported_at) DESC
+  `).all(lotType, lotType);
+
+  res.json(reports);
 });
 
 router.post("/", authenticate, authorize("security"), (req, res) => {

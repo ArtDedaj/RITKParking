@@ -4,6 +4,10 @@ import { config } from "../config.js";
 let transporter;
 
 function hasSmtpConfig() {
+  if (process.env.NODE_ENV === "test" || process.env.VITEST) {
+    return false;
+  }
+
   return Boolean(config.smtpHost && config.smtpUser && config.smtpPass);
 }
 

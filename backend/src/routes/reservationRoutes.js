@@ -1,5 +1,6 @@
 import express from "express";
 import { authenticate } from "../middleware/auth.js";
+import { isAdminRole } from "../utils/roles.js";
 import {
   cancelReservation,
   createRecurringReservation,
@@ -10,17 +11,17 @@ import {
 const router = express.Router();
 
 router.get("/", authenticate, (req, res) => {
-  const isSecurity = req.user.role === "security";
+  const isSecurity = isAdminRole(req.user.role);
   const reservations = isSecurity
     ? req.db.prepare(`
-        SELECT reservations.*, users.name AS user_name, users.role AS user_role, parking_spots.code AS spot_code
+        SELECT reservations.*, users.name AS user_name, users.role AS user_role, parking_spots.code AS spot_code, parking_spots.lot_type
         FROM reservations
         JOIN users ON users.id = reservations.user_id
         JOIN parking_spots ON parking_spots.id = reservations.spot_id
         ORDER BY reservations.start_time DESC
       `).all()
     : req.db.prepare(`
-        SELECT reservations.*, parking_spots.code AS spot_code
+        SELECT reservations.*, parking_spots.code AS spot_code, parking_spots.lot_type
         FROM reservations
         JOIN parking_spots ON parking_spots.id = reservations.spot_id
         WHERE reservations.user_id = ?
@@ -73,16 +74,16 @@ router.patch("/:id/cancel", authenticate, (req, res, next) => {
 });
 
 router.get("/recurring/list", authenticate, (req, res) => {
-  const rows = req.user.role === "security"
+  const rows = isAdminRole(req.user.role)
     ? req.db.prepare(`
-        SELECT recurring_reservations.*, parking_spots.code AS spot_code, users.name AS user_name
+        SELECT recurring_reservations.*, parking_spots.code AS spot_code, parking_spots.lot_type, users.name AS user_name
         FROM recurring_reservations
         JOIN parking_spots ON parking_spots.id = recurring_reservations.spot_id
         JOIN users ON users.id = recurring_reservations.user_id
         ORDER BY recurring_reservations.created_at DESC
       `).all()
     : req.db.prepare(`
-        SELECT recurring_reservations.*, parking_spots.code AS spot_code
+        SELECT recurring_reservations.*, parking_spots.code AS spot_code, parking_spots.lot_type
         FROM recurring_reservations
         JOIN parking_spots ON parking_spots.id = recurring_reservations.spot_id
         WHERE recurring_reservations.user_id = ?
