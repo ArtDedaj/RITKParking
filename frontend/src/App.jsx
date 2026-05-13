@@ -1199,6 +1199,7 @@ function ReservationList({ title, reservations, onCancel, onReport, showUser = f
 }
 
 function AdminScreen({
+  currentUser,
   users,
   approvals,
   reports,
@@ -1216,6 +1217,8 @@ function AdminScreen({
 }) {
   const [activeSection, setActiveSection] = useState("users");
   const [showBookingsList, setShowBookingsList] = useState(false);
+  const [bookingsMode, setBookingsMode] = useState("mine");
+  const [bookingsDate, setBookingsDate] = useState(formatDateValue(new Date()));
   const [usersMode, setUsersMode] = useState("search");
   const [userForm, setUserForm] = useState({ name: "", email: "", password: "", role: "staff" });
   const [spotForm, setSpotForm] = useState({ code: "", side: "left", type: "standard", lotType: "general", notes: "" });
@@ -1252,7 +1255,7 @@ function AdminScreen({
         <div className="section-tabs">
           {[
             { key: "parkings", label: "Parkings" },
-            { key: "bookings", label: "Bookings" },
+            { key: "bookings", label: "My Bookings" },
             { key: "users", label: "Users" },
             { key: "reports", label: "Reports" },
             { key: "rules", label: "Scheduling Rules" }
@@ -1415,15 +1418,33 @@ function AdminScreen({
       {activeSection === "bookings" ? (
         <div className="panel">
           <div className="section-heading">
-            <h3>Bookings</h3>
+            <h3>My Bookings</h3>
             <button className="secondary-button" type="button" onClick={() => setShowBookingsList((value) => !value)}>
               {showBookingsList ? "Hide booking list" : "Show booking list"}
             </button>
           </div>
-          <p>All reservations in compact view for high-volume days.</p>
+          <div className="action-row align-start">
+            <button className={bookingsMode === "mine" ? "mini-button success" : "mini-button"} type="button" onClick={() => setBookingsMode("mine")}>My Bookings</button>
+            <button className={bookingsMode === "users" ? "mini-button success" : "mini-button"} type="button" onClick={() => setBookingsMode("users")}>User Bookings</button>
+          </div>
+          <label>
+            Day
+            <input type="date" value={bookingsDate} onChange={(event) => setBookingsDate(event.target.value)} />
+          </label>
+          <p>Compact list, newest to oldest, filtered by selected day.</p>
           {showBookingsList ? (
             <div className="compact-bookings-list">
-              {reservations.map((reservation) => (
+              {reservations
+                .filter((reservation) => {
+                  const sameDay = String(reservation.start_time || "").slice(0, 10) === bookingsDate;
+                  if (!sameDay) return false;
+                  if (bookingsMode === "mine") {
+                    return Number(reservation.user_id) === Number(currentUser?.id);
+                  }
+                  return Number(reservation.user_id) !== Number(currentUser?.id);
+                })
+                .sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime())
+                .map((reservation) => (
                 <div className="compact-booking-row" key={reservation.id}>
                   <span>#{reservation.id}</span>
                   <span>{reservation.spot_code || "N/A"}</span>
@@ -1431,7 +1452,13 @@ function AdminScreen({
                   <span>{reservation.status}</span>
                 </div>
               ))}
-              {!reservations.length ? <p className="empty-state">No bookings found.</p> : null}
+              {!reservations
+                .filter((reservation) => {
+                  const sameDay = String(reservation.start_time || "").slice(0, 10) === bookingsDate;
+                  if (!sameDay) return false;
+                  if (bookingsMode === "mine") return Number(reservation.user_id) === Number(currentUser?.id);
+                  return Number(reservation.user_id) !== Number(currentUser?.id);
+                }).length ? <p className="empty-state">No bookings found for this day.</p> : null}
             </div>
           ) : null}
         </div>
@@ -1982,6 +2009,7 @@ export default function App() {
       ) : null}
       {activeTab === "admin" && isAdminRole(user.role) ? (
         <AdminScreen
+          currentUser={user}
           users={users}
           approvals={approvals}
           reports={spotReports}
