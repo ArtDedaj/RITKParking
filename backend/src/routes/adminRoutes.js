@@ -43,7 +43,7 @@ router.patch("/settings", authenticate, authorize("security"), (req, res) => {
 router.get("/dashboard", authenticate, authorize("security"), (req, res) => {
   res.json({
     users: req.db.prepare("SELECT COUNT(*) AS count FROM users").get().count,
-    activeStudents: req.db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'student' AND status = 'active'").get().count,
+    activeStudents: req.db.prepare("SELECT COUNT(*) AS count FROM users WHERE lower(role) LIKE 'student%' AND status = 'active'").get().count,
     activeStaff: req.db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'staff' AND status = 'active'").get().count,
     totalSpots: req.db.prepare("SELECT COUNT(*) AS count FROM parking_spots").get().count,
     unavailableSpots: req.db.prepare("SELECT COUNT(*) AS count FROM parking_spots WHERE is_available = 0").get().count,
@@ -69,6 +69,7 @@ router.get("/role-rules", authenticate, authorize("security"), (req, res) => {
   const rules = req.db.prepare(`
     SELECT role_name, max_days_ahead, max_daily_active_reservations, max_reservation_hours, approval_mode, role_description, updated_at
     FROM role_scheduling_rules
+    WHERE lower(trim(role_name)) <> 'student'
     ORDER BY role_name ASC
   `).all();
   res.json(rules);

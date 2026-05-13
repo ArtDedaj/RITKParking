@@ -411,6 +411,17 @@ export function createDatabase(dbPath = config.dbPath) {
 
   db.prepare(`
     UPDATE users
+    SET role = 'student role 1'
+    WHERE lower(trim(role)) = 'student'
+  `).run();
+
+  db.prepare(`
+    DELETE FROM role_scheduling_rules
+    WHERE lower(trim(role_name)) = 'student'
+  `).run();
+
+  db.prepare(`
+    UPDATE users
     SET is_verified = 1,
         verified_at = COALESCE(verified_at, CURRENT_TIMESTAMP)
     WHERE is_verified IS NULL
