@@ -16,10 +16,10 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
-    "nodemailer": "^6.10.1"
+    "nodemailer": "^8.0.7"
   },
   "devDependencies": {
     "supertest": "^7.0.0",
-    "vitest": "^2.1.8"
+    "vitest": "^4.1.6"
   }
 }
