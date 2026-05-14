@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api.js";
-
+import PaymentPage from "./PaymentPage";
 function normalizeRole(role) {
   return String(role || "").trim().toLowerCase();
 }
@@ -2003,6 +2003,9 @@ export default function App() {
     </nav>
   );
 
+  const unpaidRecurringReservation = recurringReservations.find(
+    (r) => r.payment_status === null
+  );
   return (
     <PhoneShell footer={footer}>
       {message ? <div className="banner success">{message}</div> : null}
@@ -2014,6 +2017,9 @@ export default function App() {
           : <LotReservationScreen user={user} settings={settings} onCreateReservation={handleCreateReservation} onCreateRecurring={handleCreateRecurring} />
       ) : null}
       {activeTab === "reservations" ? (
+      unpaidRecurringReservation ? (
+        <PaymentPage recurringId={unpaidRecurringReservation.id} />
+      ) : (
         <div className="screen">
           <ReservationList
             title="My bookings"
@@ -2022,9 +2028,21 @@ export default function App() {
             onReport={!isAdminRole(user.role) ? handleCreateSpotReport : undefined}
             showUser={isAdminRole(user.role)}
           />
-          {recurringReservations.length ? <ReservationList title="Recurring reservations" reservations={recurringReservations.map((item) => ({ ...item, spot_code: item.spot_code, status: item.status }))} /> : null}
+
+          {recurringReservations.length ? (
+            <ReservationList
+              title="Recurring reservations"
+              reservations={recurringReservations.map((item) => ({
+                ...item,
+                spot_code: item.spot_code,
+                status: item.status
+              }))}
+            />
+          ) : null}
         </div>
-      ) : null}
+      )
+    ) : null}
+
       {activeTab === "profile" ? (
         <ProfileScreen
           user={user}

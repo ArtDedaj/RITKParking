@@ -5,10 +5,40 @@ import {
   cancelReservation,
   createRecurringReservation,
   createReservation,
-  updateReservationStatus
+  updateReservationStatus,
+  createRecurringInvoiceCheckout
 } from "../services/reservationService.js";
 
 const router = express.Router();
+
+// Stripe - create recurring payment session
+router.post("/create-recurring-payment", authenticate, async (req, res) => {
+  const { recurringId } = req.body;
+
+  try {
+    const session = await createRecurringInvoiceCheckout(req.db, recurringId);
+    res.json(session);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Stripe - payment success callback
+router.post("/recurring/payment-success", authenticate, (req, res) => {
+  const { recurringId } = req.body;
+
+  try {
+    req.db.prepare(`
+      UPDATE recurring_reservations
+      SET payment_status = 'paid'
+      WHERE id = ?
+    `).run(recurringId);
+
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.get("/", authenticate, (req, res) => {
   const isSecurity = isAdminRole(req.user.role);
@@ -49,9 +79,9 @@ router.post("/recurring", authenticate, (req, res, next) => {
   }
 });
 
-router.patch("/:id/status", authenticate, (req, res, next) => {
+router.patch("/:id/status", authenticate, async (req, res, next) => {
   try {
-    const reservation = updateReservationStatus(
+    const reservation = await updateReservationStatus(
       req.db,
       req.user,
       Number(req.params.id),
@@ -64,9 +94,9 @@ router.patch("/:id/status", authenticate, (req, res, next) => {
   }
 });
 
-router.patch("/:id/cancel", authenticate, (req, res, next) => {
+router.patch("/:id/cancel", authenticate, async (req, res, next) => {
   try {
-    const reservation = cancelReservation(req.db, req.user, Number(req.params.id));
+    const reservation = await cancelReservation(req.db, req.user, Number(req.params.id));
     res.json(reservation);
   } catch (error) {
     next(error);

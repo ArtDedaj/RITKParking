@@ -8,15 +8,22 @@
   ],
   "scripts": {
     "start": "npm run build --prefix frontend && npm run seed --prefix backend && cross-env NODE_ENV=production npm run start --prefix backend",
-    "dev": "concurrently \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
+    "dev": "cross-env STRIPE_SECRET_KEY=sk_test_xxx concurrently \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
     "build": "npm install --workspaces && npm run build --prefix frontend",
     "seed": "npm run seed --prefix backend",
     "test": "npm run test --prefix backend"
-    },
+  },
   "devDependencies": {
     "concurrently": "^9.1.2"
   },
   "dependencies": {
-    "cross-env": "^10.1.0"
+    "@stripe/react-stripe-js": "^6.3.0",
+    "@stripe/stripe-js": "^9.5.0",
+    "axios": "^1.16.1",
+    "cors": "^2.8.6",
+    "cross-env": "^10.1.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "stripe": "^22.1.1"
   }
 }

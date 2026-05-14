@@ -408,7 +408,24 @@ export function createDatabase(dbPath = config.dbPath) {
   ensureColumn(db, "role_scheduling_rules", "max_daily_active_reservations", "max_daily_active_reservations INTEGER DEFAULT NULL");
   ensureColumn(db, "role_scheduling_rules", "max_reservation_hours", "max_reservation_hours INTEGER DEFAULT NULL");
   ensureColumn(db, "role_scheduling_rules", "approval_mode", "approval_mode TEXT NOT NULL DEFAULT 'approved'");
+  //reservation payment columns
+  ensureColumn(
+  db,
+  "recurring_reservations",
+  "payment_status",
+  "payment_url",
+  "total_amount",
+  "stripe_session_id"
+);
 
+
+
+ensureColumn(
+  db,
+  "recurring_reservations",
+  "total_amount",
+  "total_amount INTEGER DEFAULT NULL"
+);
   db.prepare(`
     UPDATE users
     SET role = 'student role 1'

@@ -381,7 +381,7 @@ export function createRecurringReservation(db, actor, payload) {
   `).get(result.lastInsertRowid);
 }
 
-export function updateReservationStatus(db, actor, reservationId, status, approvalNote = "") {
+export async function updateReservationStatus(db, actor, reservationId, status, approvalNote = "") {
   if (!isAdminRole(actor.role)) {
     throw httpError(403, "Only security can approve or reject reservations.");
   }
@@ -408,7 +408,7 @@ export function updateReservationStatus(db, actor, reservationId, status, approv
   return db.prepare("SELECT * FROM reservations WHERE id = ?").get(reservationId);
 }
 
-export function cancelReservation(db, actor, reservationId) {
+export async function cancelReservation(db, actor, reservationId) {
   const reservation = db.prepare("SELECT * FROM reservations WHERE id = ?").get(reservationId);
   if (!reservation) {
     throw httpError(404, "Reservation not found.");
@@ -419,6 +419,7 @@ export function cancelReservation(db, actor, reservationId) {
   }
 
   db.prepare("UPDATE reservations SET status = 'cancelled' WHERE id = ?").run(reservationId);
+
   createAuditLog(db, actor.id, "reservation_cancelled", "reservation", reservationId);
   notifyUserByEmail(
     db,
