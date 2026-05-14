@@ -67,5 +67,8 @@ export const api = {
   updateSettings: (payload) => request("/admin/settings", { method: "PATCH", body: JSON.stringify(payload) }),
   roleRules: () => request("/admin/role-rules"),
   updateRoleRule: (roleName, payload) => request(`/admin/role-rules/${encodeURIComponent(roleName)}`, { method: "PATCH", body: JSON.stringify(payload) }),
-  updateSpot: (id, payload) => request(`/spots/${id}`, { method: "PATCH", body: JSON.stringify(payload) })
+  updateSpot: (id, payload) => request(`/spots/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  // Stripe
+  recurringPaymentStatus: (recurringId) => request(`/reservations/recurring/${recurringId}/payment-status`),
 };
+export default api;

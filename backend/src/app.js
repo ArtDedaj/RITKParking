@@ -1,5 +1,6 @@
 import cors from "cors";
 import express from "express";
+import Stripe from "stripe";
 import { createDatabase } from "./db.js";
 import { config } from "./config.js";
 import authRoutes from "./routes/authRoutes.js";
@@ -15,10 +16,46 @@ export function createApp(options = {}) {
   if (options.bootstrapDemoUsers !== false) {
     ensureDemoUsers(db);
   }
+
   const app = express();
 
   app.use(cors({ origin: config.frontendUrl, credentials: true }));
+
+  // Stripe webhook — must be before express.json() to receive raw body
+  app.post(
+    "/reservations/stripe/webhook",
+    express.raw({ type: "application/json" }),
+    async (req, res) => {
+      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+      const sig = req.headers["stripe-signature"];
+
+      let event;
+      try {
+        event = stripe.webhooks.constructEvent(
+          req.body,
+          sig,
+          process.env.STRIPE_WEBHOOK_SECRET
+        );
+      } catch (err) {
+        return res.status(400).send(`Webhook error: ${err.message}`);
+      }
+
+      if (event.type === "checkout.session.completed") {
+        const session = event.data.object;
+        const recurringId = session.metadata?.recurring_id;
+        if (recurringId && session.payment_status === "paid") {
+          db.prepare(
+            "UPDATE recurring_reservations SET payment_status = 'paid' WHERE id = ?"
+          ).run(Number(recurringId));
+        }
+      }
+
+      res.json({ received: true });
+    }
+  );
+
   app.use(express.json());
+
   app.use((req, res, next) => {
     req.db = db;
     next();

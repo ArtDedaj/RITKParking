@@ -11,7 +11,7 @@
     "dev": "cross-env STRIPE_SECRET_KEY=sk_test_xxx concurrently \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
     "build": "npm install --workspaces && npm run build --prefix frontend",
     "seed": "npm run seed --prefix backend",
-    "test": "npm run test --prefix backend"
+    "test": "cross-env STRIPE_SECRET_KEY=sk_test_xx npm run test --prefix backend"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

@@ -1,6 +1,9 @@
 import { hasOverlap, isFutureRange, isHalfHourIncrement } from "../utils/time.js";
 import { isAdminRole, isStaffLikeRole, isStudentRole, isStudentRoleLevel1 } from "../utils/roles.js";
 import { sendMail } from "./mailService.js";
+import Stripe from "stripe";
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 function httpError(status, message) {
   const error = new Error(message);
@@ -205,6 +208,83 @@ function ensureReservationAllowed(actor, userRecord) {
   }
 }
 
+// ─── Stripe ────────────────────────────────────────────────────────────────
+
+function countOccurrences(dayOfWeek, semesterStart, semesterEnd) {
+  let count = 0;
+  const current = new Date(semesterStart);
+  const end = new Date(semesterEnd);
+
+  while (current.getDay() !== Number(dayOfWeek)) {
+    current.setDate(current.getDate() + 1);
+  }
+
+  while (current <= end) {
+    count++;
+    current.setDate(current.getDate() + 7);
+  }
+
+  return count;
+}
+
+export async function createRecurringInvoiceCheckout(db, recurringId) {
+  const recurring = db.prepare("SELECT * FROM recurring_reservations WHERE id = ?").get(recurringId);
+  if (!recurring) throw new Error("Recurring reservation not found");
+
+  const slotHours =
+    (new Date(`1970-01-01T${recurring.end_time}`) -
+      new Date(`1970-01-01T${recurring.start_time}`)) /
+    (1000 * 60 * 60);
+
+  const occurrences = countOccurrences(
+    recurring.day_of_week,
+    recurring.semester_start,
+    recurring.semester_end
+  );
+
+  const totalHours = occurrences * slotHours;
+  const hourlyRate = 2; // €2/hr
+  const amountCents = Math.round(totalHours * hourlyRate * 100);
+
+  if (amountCents <= 0) throw new Error("Calculated amount is zero, nothing to charge");
+
+  const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+
+  const session = await stripe.checkout.sessions.create({
+    mode: "payment",
+    payment_method_types: ["card"],
+    line_items: [
+      {
+        price_data: {
+          currency: "eur",
+          product_data: {
+            name: "Parking Permit — Recurring Reservation",
+            description: `${occurrences} session(s) × ${slotHours}h × €${hourlyRate}/hr`,
+          },
+          unit_amount: amountCents,
+        },
+        quantity: 1,
+      },
+    ],
+    success_url: `${frontendUrl}/booking-summary/${recurringId}?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${frontendUrl}/dashboard`,
+    metadata: { recurring_id: String(recurringId) },
+  });
+
+  db.prepare(`
+    UPDATE recurring_reservations
+    SET payment_status    = 'pending',
+        payment_url       = ?,
+        total_amount      = ?,
+        stripe_session_id = ?
+    WHERE id = ?
+  `).run(session.url, amountCents, session.id, recurringId);
+
+  return { url: session.url, amount_total: amountCents, sessionId: session.id };
+}
+
+// ─── Exports ───────────────────────────────────────────────────────────────
+
 export function createReservation(db, actor, payload) {
   const { spotId, startTime, endTime, lotType, startClock, endClock } = payload;
   const settings = getSettings(db);
@@ -397,6 +477,13 @@ export async function updateReservationStatus(db, actor, reservationId, status, 
     WHERE id = ?
   `).run(status, actor.id, approvalNote, reservationId);
 
+  // Generate Stripe checkout session stored on the recurring row.
+  // We do NOT return it to the admin — the student picks it up via
+  // payment_status = 'pending' on their next dashboard load.
+  if (status === "approved" && reservation.recurring_group_id) {
+    await createRecurringInvoiceCheckout(db, reservation.recurring_group_id);
+  }
+
   createAuditLog(db, actor.id, "reservation_status_updated", "reservation", reservationId, status);
   notifyUserByEmail(
     db,
@@ -420,6 +507,13 @@ export async function cancelReservation(db, actor, reservationId) {
 
   db.prepare("UPDATE reservations SET status = 'cancelled' WHERE id = ?").run(reservationId);
 
+  // Student cancelled → charge full amount → return checkout URL so
+  // frontend can redirect them to Stripe immediately.
+  let checkoutSession = null;
+  if (reservation.recurring_group_id) {
+    checkoutSession = await createRecurringInvoiceCheckout(db, reservation.recurring_group_id);
+  }
+
   createAuditLog(db, actor.id, "reservation_cancelled", "reservation", reservationId);
   notifyUserByEmail(
     db,
@@ -428,5 +522,7 @@ export async function cancelReservation(db, actor, reservationId) {
     `Reservation #${reservationId} has been cancelled and the parking spot is now free for reuse.`
   );
 
-  return db.prepare("SELECT * FROM reservations WHERE id = ?").get(reservationId);
+  const updated = db.prepare("SELECT * FROM reservations WHERE id = ?").get(reservationId);
+  return { ...updated, checkoutSession };
 }
+

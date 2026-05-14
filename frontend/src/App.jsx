@@ -1833,8 +1833,13 @@ export default function App() {
   }
 
   async function handleCancelReservation(id) {
-    await api.cancelReservation(id);
+    const res = await api.cancelReservation(id);
+     console.log("cancel response:", res);
     setMessage("Reservation cancelled.");
+    if (res.checkoutSession?.url) {
+  window.location.href = res.checkoutSession.url;
+  return;
+}
     await loadData();
   }
 
@@ -2004,7 +2009,7 @@ export default function App() {
   );
 
   const unpaidRecurringReservation = recurringReservations.find(
-    (r) => r.payment_status === null
+    r => r.payment_status === 'pending' && r.payment_url
   );
   return (
     <PhoneShell footer={footer}>

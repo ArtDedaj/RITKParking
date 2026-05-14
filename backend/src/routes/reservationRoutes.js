@@ -1,4 +1,5 @@
 import express from "express";
+import Stripe from "stripe";
 import { authenticate } from "../middleware/auth.js";
 import { isAdminRole } from "../utils/roles.js";
 import {
@@ -11,17 +12,7 @@ import {
 
 const router = express.Router();
 
-// Stripe - create recurring payment session
-router.post("/create-recurring-payment", authenticate, async (req, res) => {
-  const { recurringId } = req.body;
 
-  try {
-    const session = await createRecurringInvoiceCheckout(req.db, recurringId);
-    res.json(session);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
 
 // Stripe - payment success callback
 router.post("/recurring/payment-success", authenticate, (req, res) => {
@@ -32,12 +23,45 @@ router.post("/recurring/payment-success", authenticate, (req, res) => {
       UPDATE recurring_reservations
       SET payment_status = 'paid'
       WHERE id = ?
-    `).run(recurringId);
+    `).run(Number(recurringId));
 
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Stripe - verify payment status after user returns from Checkout
+// Called by BookingSummary on mount with ?session_id=xxx from Stripe redirect
+router.get("/recurring/:id/payment-status", authenticate, async (req, res) => {
+  const recurring = req.db
+    .prepare("SELECT * FROM recurring_reservations WHERE id = ? AND user_id = ?")
+    .get(Number(req.params.id), req.user.id);
+
+  if (!recurring) return res.status(404).json({ error: "Not found" });
+
+  // If Stripe session exists and not yet marked paid, verify live with Stripe
+  if (recurring.stripe_session_id && recurring.payment_status !== "paid") {
+    try {
+      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+      const session = await stripe.checkout.sessions.retrieve(recurring.stripe_session_id);
+
+      if (session.payment_status === "paid") {
+        req.db
+          .prepare("UPDATE recurring_reservations SET payment_status = 'paid' WHERE id = ?")
+          .run(recurring.id);
+        recurring.payment_status = "paid";
+      }
+    } catch (_) {
+      // Stripe unreachable — return what we have in DB
+    }
+  }
+
+  res.json({
+    payment_status: recurring.payment_status,
+    payment_url: recurring.payment_url,
+    total_amount: recurring.total_amount,
+  });
 });
 
 router.get("/", authenticate, (req, res) => {
