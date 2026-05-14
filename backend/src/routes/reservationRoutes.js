@@ -38,8 +38,10 @@ router.get("/recurring/:id/payment-status", authenticate, async (req, res) => {
     .prepare("SELECT * FROM recurring_reservations WHERE id = ? AND user_id = ?")
     .get(Number(req.params.id), req.user.id);
 
-  if (!recurring) return res.status(404).json({ error: "Not found" });
-
+if (!recurring) {
+  console.warn("No recurring reservation found for ID:", recurringId);
+  return null;
+}
   // If Stripe session exists and not yet marked paid, verify live with Stripe
   if (recurring.stripe_session_id && recurring.payment_status !== "paid") {
     try {

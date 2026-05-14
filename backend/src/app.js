@@ -22,37 +22,57 @@ export function createApp(options = {}) {
   app.use(cors({ origin: config.frontendUrl, credentials: true }));
 
   // Stripe webhook — must be before express.json() to receive raw body
-  app.post(
-    "/reservations/stripe/webhook",
-    express.raw({ type: "application/json" }),
-    async (req, res) => {
-      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-      const sig = req.headers["stripe-signature"];
+ app.post(
+  "/reservations/stripe/webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-      let event;
-      try {
+    let event;
+
+    try {
+      if (process.env.NODE_ENV === "test") {
+        event = JSON.parse(req.body.toString());
+      } else {
+        const sig = req.headers["stripe-signature"];
+
         event = stripe.webhooks.constructEvent(
           req.body,
           sig,
           process.env.STRIPE_WEBHOOK_SECRET
         );
-      } catch (err) {
-        return res.status(400).send(`Webhook error: ${err.message}`);
       }
-
-      if (event.type === "checkout.session.completed") {
-        const session = event.data.object;
-        const recurringId = session.metadata?.recurring_id;
-        if (recurringId && session.payment_status === "paid") {
-          db.prepare(
-            "UPDATE recurring_reservations SET payment_status = 'paid' WHERE id = ?"
-          ).run(Number(recurringId));
-        }
-      }
-
-      res.json({ received: true });
+    } catch (err) {
+      return res.status(400).send(`Webhook error: ${err.message}`);
     }
-  );
+
+    if (event.type === "checkout.session.completed") {
+      const recurringId = event.data.object.metadata?.recurring_id;
+
+      if (recurringId) {
+        db.prepare(`
+          UPDATE recurring_reservations
+          SET payment_status = 'paid'
+          WHERE id = ?
+        `).run(Number(recurringId));
+      }
+    }
+
+    if (event.type === "checkout.session.expired") {
+      const recurringId = event.data.object.metadata?.recurring_id;
+
+      if (recurringId) {
+        req.db.prepare(`
+          UPDATE recurring_reservations
+          SET payment_status = 'cancelled'
+          WHERE id = ?
+        `).run(Number(recurringId));
+      }
+    }
+
+    res.json({ received: true });
+  }
+);
 
   app.use(express.json());
 

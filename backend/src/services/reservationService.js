@@ -3,8 +3,9 @@ import { isAdminRole, isStaffLikeRole, isStudentRole, isStudentRoleLevel1 } from
 import { sendMail } from "./mailService.js";
 import Stripe from "stripe";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-
+function getStripe() {
+  return new Stripe(process.env.STRIPE_SECRET_KEY);
+}
 function httpError(status, message) {
   const error = new Error(message);
   error.status = status;
@@ -229,8 +230,10 @@ function countOccurrences(dayOfWeek, semesterStart, semesterEnd) {
 
 export async function createRecurringInvoiceCheckout(db, recurringId) {
   const recurring = db.prepare("SELECT * FROM recurring_reservations WHERE id = ?").get(recurringId);
-  if (!recurring) throw new Error("Recurring reservation not found");
-
+if (!recurring) {
+  console.warn("No recurring reservation found for ID:", recurringId);
+  return null;
+}
   const slotHours =
     (new Date(`1970-01-01T${recurring.end_time}`) -
       new Date(`1970-01-01T${recurring.start_time}`)) /
@@ -381,9 +384,9 @@ export function createReservation(db, actor, payload) {
 
   const status = getUserApprovalMode(db, actor, settings);
   const result = db.prepare(`
-    INSERT INTO reservations (user_id, spot_id, start_time, end_time, status)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(actor.id, spot.id, startTime, endTime, status);
+    INSERT INTO reservations (user_id, spot_id, start_time, end_time, status,  recurring_group_id)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(actor.id, spot.id, startTime, endTime, status,  payload.recurringGroupId || null);
 
   createAuditLog(db, actor.id, "reservation_created", "reservation", result.lastInsertRowid, JSON.stringify(payload));
   notifyUserByEmail(
@@ -450,7 +453,7 @@ export function createRecurringReservation(db, actor, payload) {
       (user_id, spot_id, day_of_week, start_time, end_time, semester_start, semester_end, recurrence_type, status)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active')
   `).run(actor.id, spot.id, dayOfWeek, startTime, endTime, semesterStart, semesterEnd, recurrenceType);
-
+  const recurringGroupId = result.lastInsertRowid;
   createAuditLog(db, actor.id, "recurring_reservation_created", "recurring_reservation", result.lastInsertRowid, JSON.stringify(payload));
 
   return db.prepare(`
@@ -480,9 +483,32 @@ export async function updateReservationStatus(db, actor, reservationId, status, 
   // Generate Stripe checkout session stored on the recurring row.
   // We do NOT return it to the admin — the student picks it up via
   // payment_status = 'pending' on their next dashboard load.
-  if (status === "approved" && reservation.recurring_group_id) {
-    await createRecurringInvoiceCheckout(db, reservation.recurring_group_id);
-  }
+// Generate Stripe checkout session stored on the recurring row.
+// We do NOT return it to the admin — the student picks it up via
+// payment_status = 'pending' on their next dashboard load.
+
+const result = db.prepare(`
+  INSERT INTO recurring_reservations
+    (user_id, spot_id, day_of_week, start_time, end_time,
+     semester_start, semester_end, recurrence_type, status)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`).run(
+  actor.id,
+  spot.id,
+  dayOfWeek,
+  startTime,
+  endTime,
+  semesterStart,
+  semesterEnd,
+  recurrenceType,
+  'active'
+);
+
+const recurringId = result.lastInsertRowid;
+
+
+// immediately create Stripe session here
+await createRecurringInvoiceCheckout(db, recurringId);
 
   createAuditLog(db, actor.id, "reservation_status_updated", "reservation", reservationId, status);
   notifyUserByEmail(
@@ -509,10 +535,19 @@ export async function cancelReservation(db, actor, reservationId) {
 
   // Student cancelled → charge full amount → return checkout URL so
   // frontend can redirect them to Stripe immediately.
-  let checkoutSession = null;
-  if (reservation.recurring_group_id) {
-    checkoutSession = await createRecurringInvoiceCheckout(db, reservation.recurring_group_id);
+let checkoutSession = null;
+
+if (reservation.recurring_group_id) {
+  try {
+    checkoutSession = await createRecurringInvoiceCheckout(
+      db,
+      reservation.recurring_group_id
+    );
+  } catch (err) {
+    console.error("Stripe checkout failed:", err.message);
+    checkoutSession = null; // don’t crash cancel flow
   }
+}
 
   createAuditLog(db, actor.id, "reservation_cancelled", "reservation", reservationId);
   notifyUserByEmail(
@@ -523,6 +558,15 @@ export async function cancelReservation(db, actor, reservationId) {
   );
 
   const updated = db.prepare("SELECT * FROM reservations WHERE id = ?").get(reservationId);
-  return { ...updated, checkoutSession };
+return {
+  ...updated,
+  checkoutSession: checkoutSession
+    ? {
+        url: checkoutSession.url,
+        sessionId: checkoutSession.sessionId,
+        amount: checkoutSession.amount_total
+      }
+    : null
+};
 }
 

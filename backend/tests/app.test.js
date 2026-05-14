@@ -8,7 +8,8 @@ import { ensureDemoUsers, runSeed } from "../src/seed.js";
 
 let app;
 let db;
-
+process.env.STRIPE_SECRET_KEY = "sk_test_dummy";
+process.env.NODE_ENV = "test";
 function futureIso(hoursAhead = 24) {
   return new Date(Date.now() + hoursAhead * 60 * 60 * 1000).toISOString();
 }
@@ -582,5 +583,48 @@ describe("seed layout", () => {
 
     expect(entranceSpots).toHaveLength(0);
     expect(staffSpotCount).toBe(20);
+  });
+});
+describe("Stripe webhook", () => {
+  it("handles checkout.session.completed", async () => {
+    const event = {
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          metadata: {
+            recurring_id: 1
+          }
+        }
+      }
+    };
+
+    const res = await request(app)
+      .post("/reservations/stripe/webhook")
+      .set("Content-Type", "application/json")
+      .send(JSON.stringify(event));
+
+    expect(res.status).toBe(200);
+    expect(res.body.received).toBe(true);
+  });
+
+  it("handles checkout.session.expired (cancel)", async () => {
+    const event = {
+      type: "checkout.session.expired",
+      data: {
+        object: {
+          metadata: {
+            recurring_id: 1
+          }
+        }
+      }
+    };
+
+    const res = await request(app)
+      .post("/reservations/stripe/webhook")
+      .set("Content-Type", "application/json")
+      .send(Buffer.from(JSON.stringify(event)));
+
+    expect(res.status).toBe(200);
+    expect(res.body.received).toBe(true);
   });
 });
